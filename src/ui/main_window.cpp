@@ -10,13 +10,16 @@
 #include <ros/ros.h>
 #include "ros/robot_controller.h"
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(ros::NodeHandle& nh, QWidget* parent)
     : QMainWindow(parent)
     , current_linear_speed_(0.0)
     , current_angular_speed_(0.0)
     , battery_level_(100)
     , is_auto_mode_(false)
 {
+    // 初始化ROS控制器
+    robot_controller_ = std::make_unique<RobotController>(nh);
+
     // 创建中心部件
     QWidget* central = new QWidget(this);
     setCentralWidget(central);
@@ -37,7 +40,7 @@ MainWindow::MainWindow(QWidget* parent)
     
     status_panel_ = new RobotStatusPanel(this);
     speed_dashboard_ = new SpeedDashboard(this);
-    speed_dashboard_->setFixedHeight(100);  // 限制仪表盘高度
+    speed_dashboard_->setFixedHeight(100);
     map_view_ = new MapView(this);
 
     // 创建顶部状态栏布局
@@ -109,17 +112,13 @@ MainWindow::MainWindow(QWidget* parent)
     status_timer_ = new QTimer(this);
     connect(status_timer_, &QTimer::timeout,
             this, &MainWindow::updateRobotStatus);
-    status_timer_->start(100);  // 提高更新频率到10Hz
+    status_timer_->start(100);  // 10Hz
 
     // 创建并启动键盘控制更新定时器
     keyboard_timer_ = new QTimer(this);
     connect(keyboard_timer_, &QTimer::timeout,
             this, &MainWindow::updateKeyboardControl);
-    keyboard_timer_->start(50);  // 20Hz的更新频率
-
-    // 初始化ROS
-    ros::NodeHandle nh;
-    robot_controller_ = std::make_unique<RobotController>(nh);
+    keyboard_timer_->start(50);  // 20Hz
 
     // 初始化显示
     updateRobotStatus();
@@ -152,57 +151,64 @@ void MainWindow::keyReleaseEvent(QKeyEvent* event)
 
 void MainWindow::updateKeyboardControl()
 {
-    // 如果没有任何按键按下，确保机器人停止
-    if (pressed_keys_.isEmpty()) {
-        onJoystickMoved(0.0, 0.0);
-        onRotationJoystickMoved(0.0, 0.0);
-        joystick_->setPosition(0.0, 0.0);
-        rotation_joystick_->setPosition(0.0, 0.0);
+    // 如果没有任何按键按下，且摇杆没有被按下，才发送零速度
+    if (pressed_keys_.isEmpty() && !joystick_->property("is_pressed").toBool() && 
+        !rotation_joystick_->property("is_pressed").toBool()) {
+        current_linear_speed_ = 0.0;
+        current_angular_speed_ = 0.0;
+        speed_dashboard_->setLinearSpeed(0.0);
+        speed_dashboard_->setAngularSpeed(0.0);
+        status_panel_->updateVelocity(current_linear_speed_, current_angular_speed_);
+        robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
         return;
     }
 
-    // 处理移动控制
-    double x = 0.0, y = 0.0;
-    
-    // 前后移动
-    if (pressed_keys_.contains(Qt::Key_W) && !pressed_keys_.contains(Qt::Key_S)) {
-        y = -1.0;  // 前进
-    } else if (pressed_keys_.contains(Qt::Key_S) && !pressed_keys_.contains(Qt::Key_W)) {
-        y = 1.0;   // 后退
-    }
-    
-    // 左右移动
-    if (pressed_keys_.contains(Qt::Key_A) && !pressed_keys_.contains(Qt::Key_D)) {
-        x = -1.0;  // 左移
-    } else if (pressed_keys_.contains(Qt::Key_D) && !pressed_keys_.contains(Qt::Key_A)) {
-        x = 1.0;   // 右移
-    }
-
-    // 如果有移动输入，更新移动摇杆
-    if (x != 0.0 || y != 0.0) {
-        // 标准化向量以确保对角线移动速度不会过快
-        double length = std::sqrt(x*x + y*y);
-        if (length > 1.0) {
-            x /= length;
-            y /= length;
+    // 处理键盘输入
+    if (!pressed_keys_.isEmpty()) {
+        // 处理移动控制
+        double x = 0.0, y = 0.0;
+        
+        // 前后移动
+        if (pressed_keys_.contains(Qt::Key_W) && !pressed_keys_.contains(Qt::Key_S)) {
+            y = -1.0;  // 前进
+        } else if (pressed_keys_.contains(Qt::Key_S) && !pressed_keys_.contains(Qt::Key_W)) {
+            y = 1.0;   // 后退
         }
-        joystick_->setPosition(x, y);  // 更新摇杆位置
-        onJoystickMoved(x, y);
+        
+        // 左右移动
+        if (pressed_keys_.contains(Qt::Key_A) && !pressed_keys_.contains(Qt::Key_D)) {
+            x = -1.0;  // 左移
+        } else if (pressed_keys_.contains(Qt::Key_D) && !pressed_keys_.contains(Qt::Key_A)) {
+            x = 1.0;   // 右移
+        }
+
+        // 如果有移动输入，更新移动摇杆
+        if (x != 0.0 || y != 0.0) {
+            // 标准化向量以确保对角线移动速度不会过快
+            double length = std::sqrt(x*x + y*y);
+            if (length > 1.0) {
+                x /= length;
+                y /= length;
+            }
+            joystick_->setPosition(x, y);  // 更新摇杆位置
+        }
+
+        // 处理旋转控制
+        double rot_x = 0.0;
+        if (pressed_keys_.contains(Qt::Key_Left) && !pressed_keys_.contains(Qt::Key_Right)) {
+            rot_x = 1.0;  // 左转
+        } else if (pressed_keys_.contains(Qt::Key_Right) && !pressed_keys_.contains(Qt::Key_Left)) {
+            rot_x = -1.0; // 右转
+        }
+
+        // 如果有旋转输入，更新旋转摇杆
+        if (rot_x != 0.0) {
+            rotation_joystick_->setPosition(rot_x, 0.0);  // 更新摇杆位置
+        }
     }
 
-    // 处理旋转控制
-    double rot_x = 0.0;
-    if (pressed_keys_.contains(Qt::Key_Left) && !pressed_keys_.contains(Qt::Key_Right)) {
-        rot_x = 1.0;  // 左转
-    } else if (pressed_keys_.contains(Qt::Key_Right) && !pressed_keys_.contains(Qt::Key_Left)) {
-        rot_x = -1.0; // 右转
-    }
-
-    // 如果有旋转输入，更新旋转摇杆
-    if (rot_x != 0.0) {
-        rotation_joystick_->setPosition(rot_x, 0.0);  // 更新摇杆位置
-        onRotationJoystickMoved(rot_x, 0.0);
-    }
+    // 发布最新的速度命令
+    robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
 }
 
 void MainWindow::onJoystickMoved(double x, double y)
@@ -215,7 +221,7 @@ void MainWindow::onJoystickMoved(double x, double y)
     speed_dashboard_->setLinearSpeed(std::abs(current_linear_speed_));
     status_panel_->updateVelocity(current_linear_speed_, current_angular_speed_);
 
-    // 发布速度命令到ROS
+    // 立即发布速度命令
     robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
 }
 
@@ -229,7 +235,7 @@ void MainWindow::onRotationJoystickMoved(double x, double y)
     speed_dashboard_->setAngularSpeed(std::abs(current_angular_speed_));
     status_panel_->updateVelocity(current_linear_speed_, current_angular_speed_);
 
-    // 发布速度命令到ROS
+    // 立即发布速度命令
     robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
 }
 

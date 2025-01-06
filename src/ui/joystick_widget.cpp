@@ -6,9 +6,9 @@
 #include "ui/joystick_widget.h"
 #include <QPainter>
 #include <QMouseEvent>
+#include <QTimer>
 #include <cmath>
 #include <QDebug>
-#include <QTimer>
 
 JoystickWidget::JoystickWidget(QWidget* parent)
     : QWidget(parent)
@@ -21,10 +21,24 @@ JoystickWidget::JoystickWidget(QWidget* parent)
     center_pos_ = QPoint(width() / 2, height() / 2);
     stick_pos_ = center_pos_;
 
-    // 创建并配置更新定时器
+    // 初始化定时器
     update_timer_ = new QTimer(this);
-    update_timer_->setInterval(50);  // 20Hz
-    connect(update_timer_, &QTimer::timeout, this, &JoystickWidget::onUpdateTimer);
+    update_timer_->setInterval(50);  // 20Hz的更新频率
+    connect(update_timer_, &QTimer::timeout, this, [this]() {
+        // 只有在按下状态才发送位置信息
+        if (is_pressed_) {
+            emitPosition();
+        }
+    });
+
+    // 启动定时器
+    update_timer_->start();
+
+    // 启用鼠标追踪
+    setMouseTracking(true);
+
+    // 设置is_pressed属性，用于外部查询状态
+    setProperty("is_pressed", false);
 }
 
 void JoystickWidget::paintEvent(QPaintEvent* /*event*/)
@@ -81,65 +95,115 @@ void JoystickWidget::paintEvent(QPaintEvent* /*event*/)
 void JoystickWidget::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
-        is_pressed_ = true;
-        updateStickPosition(event->pos());
-        emitPosition();  // 立即发送一次位置
-        update_timer_->start();  // 启动定时器
+        QPoint pos = event->pos();
+        // 计算点击位置到中心的距离
+        QPoint delta = pos - center_pos_;
+        double distance = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+        
+        // 如果点击在活动范围内，就开始拖动
+        if (distance <= radius_) {
+            is_pressed_ = true;
+            setProperty("is_pressed", true);  // 更新属性
+            // 直接更新摇杆位置到点击位置，但要限制在活动范围内
+            if (distance > radius_) {
+                double scale = radius_ / distance;
+                delta.setX(static_cast<int>(delta.x() * scale));
+                delta.setY(static_cast<int>(delta.y() * scale));
+            }
+            stick_pos_ = center_pos_ + delta;
+            update();
+            
+            // 立即发送一次位置信息
+            emitPosition();
+            
+            // 捕获鼠标
+            grabMouse();
+        }
     }
 }
 
 void JoystickWidget::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
-        is_pressed_ = false;
-        update_timer_->stop();  // 停止定时器
-        stick_pos_ = center_pos_;  // 回到中心位置
-        update();
-        emitPosition();  // 发送中心位置
+        // 释放鼠标捕获
+        releaseMouse();
+        
+        if (is_pressed_) {
+            is_pressed_ = false;
+            setProperty("is_pressed", false);  // 更新属性
+            stick_pos_ = center_pos_;  // 回到中心位置
+            update();
+            
+            // 发送零位置信息
+            emitPosition();
+        }
     }
 }
 
 void JoystickWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if (is_pressed_) {
-        updateStickPosition(event->pos());
-        emitPosition();  // 直接发送位置信号
+        QPoint pos = event->pos();
+        // 计算相对于中心的偏移
+        QPoint delta = pos - center_pos_;
+        double distance = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+        
+        // 限制在范围内
+        if (distance > radius_) {
+            double scale = radius_ / distance;
+            delta.setX(static_cast<int>(delta.x() * scale));
+            delta.setY(static_cast<int>(delta.y() * scale));
+        }
+        
+        // 更新摇杆位置
+        stick_pos_ = center_pos_ + delta;
+        update();
+        
+        // 立即发送一次位置信息
+        emitPosition();
     }
 }
 
-void JoystickWidget::updateStickPosition(const QPoint& pos)
+void JoystickWidget::leaveEvent(QEvent* event)
 {
-    // 计算相对于中心的偏移
-    QPoint delta = pos - center_pos_;
-    
-    // 计算到中心的距离
-    double distance = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
-    
-    // 如果超出范围，进行限制
-    if (distance > radius_) {
-        // 使用浮点数计算以保持精度
-        double scale = radius_ / distance;
-        delta.setX(static_cast<int>(delta.x() * scale));
-        delta.setY(static_cast<int>(delta.y() * scale));
-    }
-    
-    // 更新摇杆位置
-    stick_pos_ = center_pos_ + delta;
-    update();  // 重绘界面
+    // 如果鼠标离开窗口时摇杆还在按下状态，保持发送当前位置
+    QWidget::leaveEvent(event);
 }
 
-void JoystickWidget::onUpdateTimer()
+void JoystickWidget::enterEvent(QEvent* event)
 {
-    if (is_pressed_) {
-        emitPosition();  // 定时发送位置信号作为备份
-    }
+    // 如果鼠标重新进入窗口，保持当前状态
+    QWidget::enterEvent(event);
 }
 
 void JoystickWidget::emitPosition()
 {
-    // 使用浮点数计算以保持精度
+    // 计算相对位置
     QPointF delta = stick_pos_ - center_pos_;
     double x = qBound(-1.0, delta.x() / radius_, 1.0);
     double y = qBound(-1.0, delta.y() / radius_, 1.0);
+    
+    // 如果不是按下状态，确保发送零位置
+    if (!is_pressed_) {
+        x = 0.0;
+        y = 0.0;
+    }
+    
+    // 发送位置信息
     emit positionChanged(x, y);
+}
+
+void JoystickWidget::setPosition(double x, double y)
+{
+    // 将输入的x,y限制在[-1,1]范围内
+    x = qBound(-1.0, x, 1.0);
+    y = qBound(-1.0, y, 1.0);
+    
+    // 计算摇杆位置
+    QPoint delta(static_cast<int>(x * radius_), static_cast<int>(y * radius_));
+    stick_pos_ = center_pos_ + delta;
+    
+    // 更新界面并发送信号
+    update();
+    emitPosition();
 } 
