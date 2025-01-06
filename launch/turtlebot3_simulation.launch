@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Turtlebot3 型号 -->
+    <arg name="model" default="burger"/>
+    <env name="TURTLEBOT3_MODEL" value="$(arg model)"/>
+
+    <!-- 启动Gazebo仿真环境 -->
+    <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/>
+
+    <!-- 启动导航功能 -->
+    <include file="$(find turtlebot3_navigation)/launch/turtlebot3_navigation.launch">
+        <arg name="map_file" value="$(find turtlebot3_navigation)/maps/map.yaml"/>
+    </include>
+
+    <!-- 启动SLAM功能 -->
+    <include file="$(find turtlebot3_slam)/launch/turtlebot3_slam.launch">
+        <arg name="slam_methods" value="gmapping"/>
+    </include>
+
+    <!-- 启动我们的GUI控制界面 -->
+    <node name="robot_control_gui" pkg="robot_control_gui" type="robot_control_gui_app" output="screen">
+        <param name="use_sim_time" value="true"/>
+        <param name="robot_name" value="turtlebot3"/>
+        <param name="cmd_vel_topic" value="/cmd_vel"/>
+        <param name="odom_topic" value="/odom"/>
+        <param name="scan_topic" value="/scan"/>
+        <param name="map_topic" value="/map"/>
+        <param name="initial_pose_topic" value="/initialpose"/>
+        <param name="max_linear_velocity" value="0.22"/>
+        <param name="max_angular_velocity" value="2.84"/>
+    </node>
+</launch> 

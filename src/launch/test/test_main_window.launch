@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 设置使用模拟时间 -->
+    <param name="/use_sim_time" value="true"/>
+
+    <!-- 启动测试节点 -->
+    <test test-name="test_main_window" pkg="robot_control_gui" type="test_main_window" time-limit="60.0">
+        <param name="use_sim_time" value="true"/>
+    </test>
+</launch> 

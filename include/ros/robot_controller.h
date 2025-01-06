@@ -1,61 +1,93 @@
-/**
- * @file robot_controller.h
- * @brief ROS通信管理类
- */
-
 #ifndef ROBOT_CONTROLLER_H
 #define ROBOT_CONTROLLER_H
 
+#include <QObject>
 #include <ros/ros.h>
-#include <geometry_msgs/Twist.h>
-#include <nav_msgs/Odometry.h>
-#include <sensor_msgs/BatteryState.h>
 #include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Odometry.h>
+#include <nav_msgs/GetMap.h>
 #include <sensor_msgs/LaserScan.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <geometry_msgs/Twist.h>
+#include <move_base_msgs/MoveBaseAction.h>
+#include <actionlib/client/simple_action_client.h>
+#include <std_srvs/Empty.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <map_server/image_loader.h>
+#include <string>
+#include <memory>
+#include <exception>
 
-class RobotController {
+typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+
+class RobotController : public QObject {
+    Q_OBJECT
+
 public:
-    explicit RobotController(ros::NodeHandle& nh);
+    explicit RobotController(QObject* parent = nullptr);
+    ~RobotController();
 
-    // 发布速度命令
-    void publishVelocity(double linear_x, double angular_z);
+    // 导航控制
+    bool setNavigationGoal(double x, double y, double theta);
+    void cancelNavigation();
+    bool isNavigating() const;
+    bool setNavigationMode(int mode);
+    int getNavigationMode() const;
 
-    // 获取机器人状态
-    double getBatteryLevel() const { return battery_level_; }
-    double getCurrentLinearSpeed() const { return current_linear_speed_; }
-    double getCurrentAngularSpeed() const { return current_angular_speed_; }
+    // 建图控制
+    bool startMapping();
+    bool stopMapping();
+    bool saveMap(const std::string& filename);
+    bool loadMap(const std::string& filename);
 
-    // 获取最新的传感器数据
-    nav_msgs::Odometry::ConstPtr getLatestOdom() const { return latest_odom_; }
-    sensor_msgs::LaserScan::ConstPtr getLatestScan() const { return latest_scan_; }
-    nav_msgs::OccupancyGrid::ConstPtr getLatestMap() const { return latest_map_; }
+    // 位姿设置
+    bool setInitialPose(double x, double y, double theta);
+
+    // 代价地图操作
+    bool updateCostmap();
+
+    // 速度控制
+    void publishVelocity(double linear, double angular);
+
+signals:
+    // 数据更新信号
+    void mapUpdated(const std::shared_ptr<nav_msgs::OccupancyGrid>& map);
+    void odomUpdated(const std::shared_ptr<nav_msgs::Odometry>& odom);
+    void scanUpdated(const std::shared_ptr<sensor_msgs::LaserScan>& scan);
 
 private:
     // ROS节点句柄
-    ros::NodeHandle& nh_;
-
-    // 发布器和订阅器
+    ros::NodeHandle nh_;
+    
+    // ROS发布器
     ros::Publisher cmd_vel_pub_;
-    ros::Subscriber odom_sub_;
-    ros::Subscriber battery_sub_;
+    ros::Publisher initial_pose_pub_;
+    
+    // ROS订阅器
     ros::Subscriber map_sub_;
+    ros::Subscriber odom_sub_;
     ros::Subscriber scan_sub_;
 
-    // 回调函数
-    void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
-    void batteryCallback(const sensor_msgs::BatteryState::ConstPtr& msg);
-    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg);
-    void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
+    // Action客户端
+    std::shared_ptr<MoveBaseClient> move_base_client_;
 
     // 状态变量
-    double battery_level_;
-    double current_linear_speed_;
-    double current_angular_speed_;
+    bool is_navigating_;
+    bool is_mapping_;
+    int navigation_mode_;
+    double max_linear_velocity_;
+    double max_angular_velocity_;
 
-    // 最新的传感器数据
-    nav_msgs::Odometry::ConstPtr latest_odom_;
-    sensor_msgs::LaserScan::ConstPtr latest_scan_;
-    nav_msgs::OccupancyGrid::ConstPtr latest_map_;
+    // ROS回调函数
+    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg);
+    void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
+    void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
+
+    // Action回调函数
+    void doneCallback(const actionlib::SimpleClientGoalState& state,
+                     const move_base_msgs::MoveBaseResultConstPtr& result);
+    void activeCallback();
+    void feedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback);
 };
 
 #endif // ROBOT_CONTROLLER_H 

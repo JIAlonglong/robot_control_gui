@@ -6,256 +6,352 @@
 #include "ui/main_window.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <cmath>
-#include <ros/ros.h>
-#include "ros/robot_controller.h"
+#include <QKeyEvent>
+#include <QGraphicsDropShadowEffect>
+#include <QGraphicsEffect>
+#include <QLabel>
+#include <QGroupBox>
+#include <QRadioButton>
+#include <QPushButton>
 
-MainWindow::MainWindow(ros::NodeHandle& nh, QWidget* parent)
+MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
-    , current_linear_speed_(0.0)
-    , current_angular_speed_(0.0)
-    , battery_level_(100)
-    , is_auto_mode_(false)
+    , keyboard_timer_(new QTimer(this))
 {
-    // 初始化ROS控制器
-    robot_controller_ = std::make_unique<RobotController>(nh);
+    // 创建ROS控制器
+    robot_controller_ = std::make_shared<RobotController>();
 
-    // 创建中心部件
-    QWidget* central = new QWidget(this);
-    setCentralWidget(central);
-
-    // 创建主布局
-    QVBoxLayout* main_layout = new QVBoxLayout(central);
-    main_layout->setContentsMargins(10, 10, 10, 10);
-    main_layout->setSpacing(10);
-
-    // 创建并添加组件
-    joystick_ = new JoystickWidget(this);
-    joystick_->setToolTip("Movement Control (WASD Keys)\nW: Forward\nS: Backward\nA: Left\nD: Right");
-    joystick_->setFixedSize(150, 150);
+    // 设置UI
+    setupUi();
     
-    rotation_joystick_ = new JoystickWidget(this);
-    rotation_joystick_->setToolTip("Rotation Control (Arrow Keys)\nLeft: Rotate Left\nRight: Rotate Right");
-    rotation_joystick_->setFixedSize(150, 150);
+    // 设置信号连接
+    setupConnections();
+
+    // 设置键盘控制定时器
+    keyboard_timer_->setInterval(100);  // 10Hz
+    connect(keyboard_timer_, &QTimer::timeout, this, &MainWindow::updateKeyboardControl);
+    keyboard_timer_->start();
+
+    // 创建并发布一次地图数据
+    auto map = std::make_shared<nav_msgs::OccupancyGrid>();
+    map->header.frame_id = "map";
+    map->header.stamp = ros::Time::now();
+    map->info.resolution = 0.05;  // 5cm分辨率
+    map->info.width = 200;        // 10米宽
+    map->info.height = 200;       // 10米高
+    map->info.origin.position.x = -5.0;
+    map->info.origin.position.y = -5.0;
     
-    status_panel_ = new RobotStatusPanel(this);
-    speed_dashboard_ = new SpeedDashboard(this);
-    speed_dashboard_->setFixedHeight(100);
-    map_view_ = new MapView(this);
-
-    // 创建顶部状态栏布局
-    QHBoxLayout* status_layout = new QHBoxLayout();
-    status_layout->addWidget(status_panel_, 2);
-    status_layout->addWidget(speed_dashboard_, 1);
-
-    // 创建底部控制布局
-    QHBoxLayout* control_layout = new QHBoxLayout();
+    // 初始化地图数据
+    map->data.resize(map->info.width * map->info.height, 0);
     
-    // 左侧移动控制组
-    QVBoxLayout* left_control = new QVBoxLayout();
-    QLabel* move_label = new QLabel("Movement Control (WASD)", this);
-    move_label->setAlignment(Qt::AlignCenter);
-    left_control->addWidget(move_label);
-    left_control->addWidget(joystick_, 0, Qt::AlignCenter);
+    // 创建一些墙壁和障碍物
+    for (unsigned int i = 0; i < map->info.width; ++i) {
+        // 上下边界
+        map->data[i] = 100;
+        map->data[i + (map->info.height-1) * map->info.width] = 100;
+        // 左右边界
+        map->data[i * map->info.width] = 100;
+        map->data[i * map->info.width + map->info.width-1] = 100;
+    }
     
-    // 右侧旋转控制组
-    QVBoxLayout* right_control = new QVBoxLayout();
-    QLabel* rotate_label = new QLabel("Rotation Control (←→)", this);
-    rotate_label->setAlignment(Qt::AlignCenter);
-    right_control->addWidget(rotate_label);
-    right_control->addWidget(rotation_joystick_, 0, Qt::AlignCenter);
+    // 添加一些固定的障碍物（不再是随机的）
+    for (int i = 0; i < 5; ++i) {
+        int x = 50 + i * 30;  // 固定间隔的障碍物
+        int y = 100;
+        for (int dx = -2; dx <= 2; ++dx) {
+            for (int dy = -2; dy <= 2; ++dy) {
+                int idx = (y + dy) * map->info.width + (x + dx);
+                if (0 <= idx && idx < static_cast<int>(map->data.size())) {
+                    map->data[idx] = 100;
+                }
+            }
+        }
+    }
 
-    // 添加到底部控制布局
-    control_layout->addLayout(left_control, 1);
-    control_layout->addStretch(3);  // 中间留空
-    control_layout->addLayout(right_control, 1);
+    // 发布地图数据（只发布一次）
+    handleMapUpdate(map);
 
-    // 添加到主布局
-    main_layout->addLayout(status_layout);
-    main_layout->addWidget(map_view_, 1);
-    main_layout->addLayout(control_layout);
+    // 创建位姿和激光数据更新定时器
+    QTimer* pose_timer = new QTimer(this);
+    connect(pose_timer, &QTimer::timeout, this, [this]() {
+        static double robot_x = 0.0;
+        static double robot_y = 0.0;
+        static double robot_theta = 0.0;
+        
+        // 创建机器人位置数据
+        auto odom = std::make_shared<nav_msgs::Odometry>();
+        odom->header.frame_id = "odom";
+        odom->header.stamp = ros::Time::now();
+        odom->child_frame_id = "base_link";
+        
+        // 更新机器人位置（圆周运动）
+        robot_x = 2.0 * cos(robot_theta);
+        robot_y = 2.0 * sin(robot_theta);
+        robot_theta += 0.02;  // 每次更新旋转一点
+        
+        odom->pose.pose.position.x = robot_x;
+        odom->pose.pose.position.y = robot_y;
+        odom->pose.pose.orientation.w = cos(robot_theta / 2.0);
+        odom->pose.pose.orientation.z = sin(robot_theta / 2.0);
 
-    // 设置窗口属性
-    setWindowTitle("Robot Control GUI");
+        // 创建激光扫描数据
+        auto scan = std::make_shared<sensor_msgs::LaserScan>();
+        scan->header.frame_id = "base_laser";
+        scan->header.stamp = ros::Time::now();
+        scan->angle_min = -M_PI/2;
+        scan->angle_max = M_PI/2;
+        scan->angle_increment = M_PI/180;  // 1度分辨率
+        scan->range_min = 0.1;
+        scan->range_max = 10.0;
+        
+        // 生成180个激光点
+        scan->ranges.resize(180);
+        for (int i = 0; i < 180; ++i) {
+            double angle = scan->angle_min + i * scan->angle_increment;
+            double range = 2.0 + 0.5 * sin(angle * 2.0);  // 生成一些动态的激光数据
+            scan->ranges[i] = range;
+        }
+
+        // 发布数据
+        handleOdomUpdate(odom);
+        handleScanUpdate(scan);
+    });
+    
+    // 启动位姿更新定时器
+    pose_timer->start(50);  // 20Hz更新位姿和激光数据
+}
+
+MainWindow::~MainWindow()
+{
+}
+
+void MainWindow::setupUi()
+{
+    // 设置窗口标题和大小
+    setWindowTitle("TurtleBot3 控制面板");
     resize(1200, 800);
 
-    // 设置样式表
+    // 创建中央部件和主布局
+    QWidget* central_widget = new QWidget(this);
+    setCentralWidget(central_widget);
+    QHBoxLayout* main_layout = new QHBoxLayout(central_widget);
+
+    // 创建左侧控制面板
+    QWidget* control_panel = new QWidget;
+    QVBoxLayout* control_layout = new QVBoxLayout(control_panel);
+    control_panel->setFixedWidth(300);
+
+    // 添加机器人状态面板
+    status_panel_ = new RobotStatusPanel;
+    control_layout->addWidget(status_panel_);
+
+    // 添加速度仪表盘
+    speed_dashboard_ = new SpeedDashboard;
+    control_layout->addWidget(speed_dashboard_);
+
+    // 添加导航面板
+    navigation_panel_ = new NavigationPanel(robot_controller_);
+    control_layout->addWidget(navigation_panel_);
+
+    // 添加摇杆控制器
+    joystick_ = new JoystickWidget;
+    joystick_->setFixedSize(200, 200);
+    QHBoxLayout* joystick_layout = new QHBoxLayout;
+    joystick_layout->addWidget(joystick_);
+    joystick_layout->setAlignment(Qt::AlignCenter);
+    control_layout->addLayout(joystick_layout);
+
+    // 添加控制按钮
+    QHBoxLayout* button_layout = new QHBoxLayout;
+    QPushButton* start_mapping_btn = new QPushButton("开始建图");
+    start_mapping_btn->setObjectName("start_mapping_btn");
+    QPushButton* stop_mapping_btn = new QPushButton("停止建图");
+    stop_mapping_btn->setObjectName("stop_mapping_btn");
+    QPushButton* save_map_btn = new QPushButton("保存地图");
+    save_map_btn->setObjectName("save_map_btn");
+    button_layout->addWidget(start_mapping_btn);
+    button_layout->addWidget(stop_mapping_btn);
+    button_layout->addWidget(save_map_btn);
+    control_layout->addLayout(button_layout);
+
+    QHBoxLayout* button_layout2 = new QHBoxLayout;
+    QPushButton* load_map_btn = new QPushButton("加载地图");
+    load_map_btn->setObjectName("load_map_btn");
+    QPushButton* set_pose_btn = new QPushButton("设置初始位置");
+    set_pose_btn->setObjectName("set_pose_btn");
+    QPushButton* clear_costmap_btn = new QPushButton("清除代价地图");
+    clear_costmap_btn->setObjectName("clear_costmap_btn");
+    button_layout2->addWidget(load_map_btn);
+    button_layout2->addWidget(set_pose_btn);
+    button_layout2->addWidget(clear_costmap_btn);
+    control_layout->addLayout(button_layout2);
+
+    // 添加导航模式选择
+    QGroupBox* nav_mode_group = new QGroupBox("导航模式");
+    QVBoxLayout* nav_mode_layout = new QVBoxLayout(nav_mode_group);
+    QRadioButton* normal_mode = new QRadioButton("普通模式");
+    normal_mode->setObjectName("normal_mode");
+    QRadioButton* fast_mode = new QRadioButton("快速模式");
+    fast_mode->setObjectName("fast_mode");
+    QRadioButton* precise_mode = new QRadioButton("精确模式");
+    precise_mode->setObjectName("precise_mode");
+    normal_mode->setChecked(true);
+    nav_mode_layout->addWidget(normal_mode);
+    nav_mode_layout->addWidget(fast_mode);
+    nav_mode_layout->addWidget(precise_mode);
+    control_layout->addWidget(nav_mode_group);
+
+    // 添加状态信息标签
+    QLabel* status_label = new QLabel("状态: 就绪");
+    control_layout->addWidget(status_label);
+
+    // 添加伸缩器
+    control_layout->addStretch();
+
+    // 创建地图显示区域
+    map_view_ = new MapView;
+    
+    // 将控制面板和地图添加到主布局
+    main_layout->addWidget(control_panel);
+    main_layout->addWidget(map_view_, 1);
+
+    // 设置样式
     setStyleSheet(R"(
-        QLabel {
-            font-size: 12px;
-            font-weight: bold;
-            color: #333333;
-            margin-bottom: 5px;
-        }
-        QWidget {
+        QMainWindow {
             background-color: #f0f0f0;
         }
-        RobotStatusPanel, SpeedDashboard {
-            background-color: white;
-            border: 1px solid #cccccc;
-            border-radius: 5px;
+        QPushButton {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 5px;
+            min-height: 30px;
+            border-radius: 4px;
         }
-        MapView {
+        QPushButton:hover {
+            background-color: #45a049;
+        }
+        QPushButton:pressed {
+            background-color: #3d8b40;
+        }
+        QGroupBox {
             border: 1px solid #cccccc;
-            border-radius: 5px;
-            background-color: white;
+            border-radius: 4px;
+            margin-top: 1ex;
+            padding: 5px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 3px 0 3px;
+        }
+        QLabel {
+            color: #333333;
         }
     )");
 
+    // 创建键盘控制定时器
+    keyboard_timer_ = new QTimer(this);
+    keyboard_timer_->setInterval(50);  // 20Hz更新频率
+}
+
+void MainWindow::setupConnections()
+{
     // 连接摇杆信号
     connect(joystick_, &JoystickWidget::positionChanged,
             this, &MainWindow::onJoystickMoved);
-    connect(rotation_joystick_, &JoystickWidget::positionChanged,
-            this, &MainWindow::onRotationJoystickMoved);
 
-    // 创建并启动状态更新定时器
-    status_timer_ = new QTimer(this);
-    connect(status_timer_, &QTimer::timeout,
-            this, &MainWindow::updateRobotStatus);
-    status_timer_->start(100);  // 10Hz
-
-    // 创建并启动键盘控制更新定时器
-    keyboard_timer_ = new QTimer(this);
+    // 连接键盘定时器
     connect(keyboard_timer_, &QTimer::timeout,
             this, &MainWindow::updateKeyboardControl);
-    keyboard_timer_->start(50);  // 20Hz
 
-    // 初始化显示
-    updateRobotStatus();
+    // 连接ROS控制器的数据更新信号
+    connect(robot_controller_.get(), &RobotController::mapUpdated,
+            this, &MainWindow::handleMapUpdate);
+    connect(robot_controller_.get(), &RobotController::odomUpdated,
+            this, &MainWindow::handleOdomUpdate);
+    connect(robot_controller_.get(), &RobotController::scanUpdated,
+            this, &MainWindow::handleScanUpdate);
 
-    // 设置键盘焦点策略
-    setFocusPolicy(Qt::StrongFocus);
+    // 连接导航面板的信号
+    connect(navigation_panel_, &NavigationPanel::navigationGoalSet,
+            [this](double x, double y, double theta) {
+                robot_controller_->setNavigationGoal(x, y, theta);
+            });
+
+    // 连接按钮信号
+    QPushButton* start_mapping_btn = findChild<QPushButton*>("start_mapping_btn");
+    connect(start_mapping_btn, &QPushButton::clicked,
+            [this]() { robot_controller_->startMapping(); });
+
+    QPushButton* stop_mapping_btn = findChild<QPushButton*>("stop_mapping_btn");
+    connect(stop_mapping_btn, &QPushButton::clicked,
+            [this]() { robot_controller_->stopMapping(); });
+
+    QPushButton* save_map_btn = findChild<QPushButton*>("save_map_btn");
+    connect(save_map_btn, &QPushButton::clicked,
+            [this]() { robot_controller_->saveMap("map"); });
+
+    QPushButton* load_map_btn = findChild<QPushButton*>("load_map_btn");
+    connect(load_map_btn, &QPushButton::clicked,
+            [this]() { robot_controller_->loadMap("map.yaml"); });
+
+    QPushButton* set_pose_btn = findChild<QPushButton*>("set_pose_btn");
+    connect(set_pose_btn, &QPushButton::clicked,
+            [this]() { /* 实现设置初始位置的逻辑 */ });
+
+    QPushButton* clear_costmap_btn = findChild<QPushButton*>("clear_costmap_btn");
+    connect(clear_costmap_btn, &QPushButton::clicked,
+            [this]() { robot_controller_->updateCostmap(); });
+
+    // 连接导航模式选择
+    QRadioButton* normal_mode = findChild<QRadioButton*>("normal_mode");
+    connect(normal_mode, &QRadioButton::toggled,
+            [this](bool checked) { if (checked) robot_controller_->setNavigationMode(0); });
+
+    QRadioButton* fast_mode = findChild<QRadioButton*>("fast_mode");
+    connect(fast_mode, &QRadioButton::toggled,
+            [this](bool checked) { if (checked) robot_controller_->setNavigationMode(1); });
+
+    QRadioButton* precise_mode = findChild<QRadioButton*>("precise_mode");
+    connect(precise_mode, &QRadioButton::toggled,
+            [this](bool checked) { if (checked) robot_controller_->setNavigationMode(2); });
+}
+
+void MainWindow::handleMapUpdate(const std::shared_ptr<nav_msgs::OccupancyGrid>& map)
+{
+    map_view_->updateMap(map);
+}
+
+void MainWindow::handleOdomUpdate(const std::shared_ptr<nav_msgs::Odometry>& odom)
+{
+    map_view_->updateRobotPose(odom);
+}
+
+void MainWindow::handleScanUpdate(const std::shared_ptr<sensor_msgs::LaserScan>& scan)
+{
+    map_view_->updateLaserScan(scan);
+}
+
+void MainWindow::onJoystickMoved(double x, double y)
+{
+    // TODO: 实现机器人速度控制
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* event)
 {
-    // 只处理我们关心的按键
-    switch (event->key()) {
-        case Qt::Key_W:
-        case Qt::Key_S:
-        case Qt::Key_A:
-        case Qt::Key_D:
-        case Qt::Key_Left:
-        case Qt::Key_Right:
-            pressed_keys_.insert(event->key());
-            break;
-    }
+    // TODO: 处理键盘按下事件
     QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::keyReleaseEvent(QKeyEvent* event)
 {
-    pressed_keys_.remove(event->key());
+    // TODO: 处理键盘释放事件
     QMainWindow::keyReleaseEvent(event);
 }
 
 void MainWindow::updateKeyboardControl()
 {
-    // 如果没有任何按键按下，且摇杆没有被按下，才发送零速度
-    if (pressed_keys_.isEmpty() && !joystick_->property("is_pressed").toBool() && 
-        !rotation_joystick_->property("is_pressed").toBool()) {
-        current_linear_speed_ = 0.0;
-        current_angular_speed_ = 0.0;
-        speed_dashboard_->setLinearSpeed(0.0);
-        speed_dashboard_->setAngularSpeed(0.0);
-        status_panel_->updateVelocity(current_linear_speed_, current_angular_speed_);
-        robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
-        return;
-    }
-
-    // 处理键盘输入
-    if (!pressed_keys_.isEmpty()) {
-        // 处理移动控制
-        double x = 0.0, y = 0.0;
-        
-        // 前后移动
-        if (pressed_keys_.contains(Qt::Key_W) && !pressed_keys_.contains(Qt::Key_S)) {
-            y = -1.0;  // 前进
-        } else if (pressed_keys_.contains(Qt::Key_S) && !pressed_keys_.contains(Qt::Key_W)) {
-            y = 1.0;   // 后退
-        }
-        
-        // 左右移动
-        if (pressed_keys_.contains(Qt::Key_A) && !pressed_keys_.contains(Qt::Key_D)) {
-            x = -1.0;  // 左移
-        } else if (pressed_keys_.contains(Qt::Key_D) && !pressed_keys_.contains(Qt::Key_A)) {
-            x = 1.0;   // 右移
-        }
-
-        // 如果有移动输入，更新移动摇杆
-        if (x != 0.0 || y != 0.0) {
-            // 标准化向量以确保对角线移动速度不会过快
-            double length = std::sqrt(x*x + y*y);
-            if (length > 1.0) {
-                x /= length;
-                y /= length;
-            }
-            joystick_->setPosition(x, y);  // 更新摇杆位置
-        }
-
-        // 处理旋转控制
-        double rot_x = 0.0;
-        if (pressed_keys_.contains(Qt::Key_Left) && !pressed_keys_.contains(Qt::Key_Right)) {
-            rot_x = 1.0;  // 左转
-        } else if (pressed_keys_.contains(Qt::Key_Right) && !pressed_keys_.contains(Qt::Key_Left)) {
-            rot_x = -1.0; // 右转
-        }
-
-        // 如果有旋转输入，更新旋转摇杆
-        if (rot_x != 0.0) {
-            rotation_joystick_->setPosition(rot_x, 0.0);  // 更新摇杆位置
-        }
-    }
-
-    // 发布最新的速度命令
-    robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
-}
-
-void MainWindow::onJoystickMoved(double x, double y)
-{
-    // 将移动摇杆位置转换为线速度命令
-    const double MAX_LINEAR_SPEED = 2.0;   // m/s
-    current_linear_speed_ = -y * MAX_LINEAR_SPEED;   // 向上为负，所以需要取反
-
-    // 更新速度仪表盘和状态面板
-    speed_dashboard_->setLinearSpeed(std::abs(current_linear_speed_));
-    status_panel_->updateVelocity(current_linear_speed_, current_angular_speed_);
-
-    // 立即发布速度命令
-    robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
-}
-
-void MainWindow::onRotationJoystickMoved(double x, double y)
-{
-    // 将旋转摇杆位置转换为角速度命令
-    const double MAX_ANGULAR_SPEED = 1.0;  // rad/s
-    current_angular_speed_ = -x * MAX_ANGULAR_SPEED; // 向左为负，所以需要取反
-
-    // 更新速度仪表盘和状态面板
-    speed_dashboard_->setAngularSpeed(std::abs(current_angular_speed_));
-    status_panel_->updateVelocity(current_linear_speed_, current_angular_speed_);
-
-    // 立即发布速度命令
-    robot_controller_->publishVelocity(current_linear_speed_, current_angular_speed_);
-}
-
-void MainWindow::updateRobotStatus()
-{
-    // 更新实际的机器人状态
-    status_panel_->updateBatteryLevel(robot_controller_->getBatteryLevel());
-    status_panel_->updateVelocity(
-        robot_controller_->getCurrentLinearSpeed(),
-        robot_controller_->getCurrentAngularSpeed()
-    );
-
-    // 更新地图显示
-    if (auto odom = robot_controller_->getLatestOdom()) {
-        map_view_->updateRobotPose(odom);
-    }
-    if (auto scan = robot_controller_->getLatestScan()) {
-        map_view_->updateLaserScan(scan);
-    }
-    if (auto map = robot_controller_->getLatestMap()) {
-        map_view_->updateMap(map);
-    }
+    // TODO: 实现键盘控制逻辑
 } 

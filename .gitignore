@@ -1,0 +1,28 @@
+# ROS
+build/
+devel/
+logs/
+.catkin_workspace
+
+# C++
+*.o
+*.so
+*.a
+*.d
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db

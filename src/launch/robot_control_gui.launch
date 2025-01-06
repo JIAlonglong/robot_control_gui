@@ -1,59 +1,15 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- 定义参数 -->
-    <arg name="robot_name" default="robot1" />
-    <arg name="use_sim" default="true" />  <!-- 是否使用仿真 -->
-
-    <!-- 设置ROS参数 -->
-    <param name="robot_name" value="$(arg robot_name)" />
-    <param name="max_linear_speed" value="2.0" />  <!-- m/s -->
-    <param name="max_angular_speed" value="1.0" /> <!-- rad/s -->
-
-    <!-- 设置话题重映射 -->
-    <!-- 控制指令 -->
-    <remap from="cmd_vel" to="/$(arg robot_name)/cmd_vel" />
-    
-    <!-- 传感器数据 -->
-    <remap from="odom" to="/$(arg robot_name)/odom" />
-    <remap from="scan" to="/$(arg robot_name)/scan" />
-    <remap from="map" to="/map" />
-    <remap from="battery_state" to="/$(arg robot_name)/battery_state" />
-
-    <!-- 启动GUI节点 -->
-    <node name="robot_control_gui" pkg="robot_control_gui" type="robot_control_gui_app" output="screen">
-        <!-- GUI特定的参数 -->
-        <param name="update_frequency" value="10.0" /> <!-- Hz -->
-        <param name="joystick_size" value="200" />     <!-- pixels -->
+    <!-- 启动地图服务器 -->
+    <node name="map_server" pkg="map_server" type="map_server" args="$(find robot_control_gui)/maps/test_map.yaml">
+        <param name="frame_id" value="map"/>
     </node>
 
-    <!-- 如果使用仿真，启动仿真环境 -->
-    <group if="$(arg use_sim)">
-        <!-- 启动Gazebo仿真器 -->
-        <include file="$(find gazebo_ros)/launch/empty_world.launch">
-            <arg name="world_name" value="$(find robot_control_gui)/worlds/test_world.world"/>
-            <arg name="paused" value="false"/>
-            <arg name="use_sim_time" value="true"/>
-            <arg name="gui" value="true"/>
-            <arg name="headless" value="false"/>
-            <arg name="debug" value="false"/>
-        </include>
+    <!-- 启动机器人状态发布器（仅用于测试） -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
 
-        <!-- 加载机器人模型到参数服务器 -->
-        <param name="robot_description" command="$(find xacro)/xacro '$(find turtlebot3_description)/urdf/turtlebot3_burger.urdf.xacro'" />
-
-        <!-- 生成机器人模型 -->
-        <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model" args="-urdf -model $(arg robot_name) -param robot_description" />
-
-        <!-- 启动机器人状态发布器 -->
-        <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher">
-            <param name="publish_frequency" type="double" value="50.0" />
-        </node>
-
-        <!-- 启动gmapping进行地图构建 -->
-        <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
-            <param name="base_frame" value="$(arg robot_name)/base_footprint"/>
-            <param name="odom_frame" value="$(arg robot_name)/odom"/>
-            <param name="map_frame"  value="map"/>
-        </node>
-    </group>
+    <!-- 启动我们的GUI程序 -->
+    <node name="robot_control_gui" pkg="robot_control_gui" type="robot_control_gui_app" output="screen">
+        <param name="use_sim_time" value="false"/>
+    </node>
 </launch> 

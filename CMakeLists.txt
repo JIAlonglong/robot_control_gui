@@ -1,138 +1,176 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.0.2)
 project(robot_control_gui)
 
-# 设置C++标准
+# 使用C++14
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 查找Qt包
-find_package(Qt5 COMPONENTS Widgets REQUIRED)
+# 查找所需的包
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  std_msgs
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  tf2
+  tf2_ros
+  map_server
+  move_base_msgs
+  actionlib
+  std_srvs
+  turtlebot3_bringup
+  turtlebot3_navigation
+  turtlebot3_slam
+  turtlebot3_teleop
+  image_transport
+  cv_bridge
+  rostest
+)
 
-# 启用Qt的MOC
+# 查找Qt5
+find_package(Qt5 REQUIRED COMPONENTS
+  Core
+  Gui
+  Widgets
+  Network
+  Test
+)
+
+# 配置catkin包
+catkin_package(
+  INCLUDE_DIRS include
+  LIBRARIES ${PROJECT_NAME}
+  CATKIN_DEPENDS
+    roscpp
+    std_msgs
+    geometry_msgs
+    nav_msgs
+    sensor_msgs
+    tf2
+    tf2_ros
+    map_server
+    move_base_msgs
+    actionlib
+    std_srvs
+    turtlebot3_bringup
+    turtlebot3_navigation
+    turtlebot3_slam
+    turtlebot3_teleop
+    image_transport
+    cv_bridge
+  DEPENDS Qt5Core Qt5Gui Qt5Widgets Qt5Network
+)
+
+# 包含目录
+include_directories(
+  include
+  ${catkin_INCLUDE_DIRS}
+  ${Qt5Core_INCLUDE_DIRS}
+  ${Qt5Gui_INCLUDE_DIRS}
+  ${Qt5Widgets_INCLUDE_DIRS}
+  ${Qt5Network_INCLUDE_DIRS}
+)
+
+# 启用Qt MOC
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# 添加ROS依赖
-find_package(catkin REQUIRED COMPONENTS
-    roscpp
-    geometry_msgs
-    nav_msgs
-    sensor_msgs
-)
-
-# 声明catkin包
-catkin_package(
-    INCLUDE_DIRS include
-    LIBRARIES ${PROJECT_NAME}
-    CATKIN_DEPENDS roscpp geometry_msgs nav_msgs sensor_msgs
-)
-
-# 添加包含目录
-include_directories(
-    ${CMAKE_SOURCE_DIR}/include
-    ${catkin_INCLUDE_DIRS}
-)
-
-# 头文件
-set(HEADERS
-    include/ui/joystick_widget.h
-    include/ui/test_window.h
-    include/ui/robot_status_panel.h
-    include/ui/test_robot_status_panel.h
-    include/ui/speed_dashboard.h
-    include/ui/test_dashboard_window.h
-    include/ui/main_window.h
-    include/ros/robot_controller.h
-    include/ui/map_view.h
-)
-
-# 源文件
+# 收集源文件
 set(SOURCES
-    src/ui/joystick_widget.cpp
-    src/ui/test_window.cpp
-    src/ui/robot_status_panel.cpp
-    src/ui/test_robot_status_panel.cpp
-    src/ui/speed_dashboard.cpp
-    src/ui/test_dashboard_window.cpp
-    src/ui/main_window.cpp
-    src/ros/robot_controller.cpp
-    src/ui/map_view.cpp
+  src/main.cpp
+  src/ui/joystick_widget.cpp
+  src/ui/main_window.cpp
+  src/ui/navigation_panel.cpp
+  src/ui/robot_status_panel.cpp
+  src/ui/speed_dashboard.cpp
+  src/ui/map_view.cpp
+  src/ros/robot_controller.cpp
 )
 
-# 测试程序源文件
-set(TEST_SOURCES
-    src/test/test_joystick.cpp
+# 收集头文件
+set(HEADERS
+  include/ui/joystick_widget.h
+  include/ui/main_window.h
+  include/ui/navigation_panel.h
+  include/ui/robot_status_panel.h
+  include/ui/speed_dashboard.h
+  include/ui/map_view.h
+  include/ros/robot_controller.h
 )
 
-# 添加测试程序源文件
-set(TEST_ROBOT_STATUS_PANEL_SOURCES
-    src/test/test_robot_status_panel_main.cpp
+# 创建库目标
+add_library(${PROJECT_NAME}
+  ${SOURCES}
+  ${HEADERS}
 )
 
-# 添加测试程序源文件
-set(TEST_DASHBOARD_SOURCES
-    src/test/test_dashboard_main.cpp
+# 链接依赖
+target_link_libraries(${PROJECT_NAME}
+  ${catkin_LIBRARIES}
+  Qt5::Core
+  Qt5::Gui
+  Qt5::Widgets
+  Qt5::Network
 )
 
-# 添加地图显示测试程序源文件
-set(TEST_MAP_VIEW_SOURCES
+# 创建可执行文件
+add_executable(${PROJECT_NAME}_app src/main.cpp)
+target_link_libraries(${PROJECT_NAME}_app
+  ${PROJECT_NAME}
+)
+
+# 安装规则
+install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_app
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+  FILES_MATCHING PATTERN "*.h"
+)
+
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+  FILES_MATCHING PATTERN "*.launch"
+)
+
+install(DIRECTORY config/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
+)
+
+install(DIRECTORY maps/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/maps
+)
+
+# 添加Python脚本的安装规则
+catkin_install_python(PROGRAMS
+  scripts/publish_test_data.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+# 测试配置
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  
+  # 添加gtest依赖
+  find_package(GTest REQUIRED)
+  include_directories(${GTEST_INCLUDE_DIRS})
+
+  # 地图显示测试
+  add_rostest_gtest(test_map_view
+    src/launch/test/test_map_view.launch
     src/test/test_map_view.cpp
-)
-
-# 主库
-add_library(${PROJECT_NAME} STATIC 
-    ${HEADERS}
     ${SOURCES}
-)
-
-# 确保MOC文件被正确生成
-target_include_directories(${PROJECT_NAME} PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_BINARY_DIR}
-)
-
-target_link_libraries(${PROJECT_NAME} PUBLIC 
-    Qt5::Widgets
+  )
+  target_link_libraries(test_map_view
     ${catkin_LIBRARIES}
-)
-
-# 测试程序
-add_executable(test_joystick ${TEST_SOURCES})
-target_link_libraries(test_joystick PRIVATE
-    ${PROJECT_NAME}
+    ${GTEST_LIBRARIES}
+    Qt5::Core
     Qt5::Widgets
-    ${catkin_LIBRARIES}
-)
+    Qt5::Test
+  )
+endif()
 
-# 测试程序
-add_executable(test_robot_status_panel ${TEST_ROBOT_STATUS_PANEL_SOURCES})
-target_link_libraries(test_robot_status_panel PRIVATE
-    ${PROJECT_NAME}
-    Qt5::Widgets
-    ${catkin_LIBRARIES}
-)
-
-# 测试程序
-add_executable(test_dashboard ${TEST_DASHBOARD_SOURCES})
-target_link_libraries(test_dashboard PRIVATE
-    ${PROJECT_NAME}
-    Qt5::Widgets
-    ${catkin_LIBRARIES}
-)
-
-# 地图显示测试程序
-add_executable(test_map_view ${TEST_MAP_VIEW_SOURCES})
-target_link_libraries(test_map_view PRIVATE
-    ${PROJECT_NAME}
-    Qt5::Widgets
-    ${catkin_LIBRARIES}
-)
-
-# 主程序
-add_executable(robot_control_gui_app src/main.cpp)
-target_link_libraries(robot_control_gui_app PRIVATE
-    ${PROJECT_NAME}
-    Qt5::Widgets
-    ${catkin_LIBRARIES}
-)

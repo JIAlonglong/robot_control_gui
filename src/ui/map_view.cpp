@@ -4,231 +4,145 @@
  */
 
 #include "ui/map_view.h"
-#include <QMouseEvent>
-#include <QWheelEvent>
-#include <QPainter>
+#include <QPaintEvent>
+#include <QResizeEvent>
 #include <cmath>
 
 MapView::MapView(QWidget* parent)
     : QWidget(parent)
-    , robot_x_(0.0)
-    , robot_y_(0.0)
-    , robot_theta_(0.0)
     , scale_(50.0)  // 1米 = 50像素
-    , is_dragging_(false)
-    , resolution_(0.05)  // 默认分辨率5cm
-    , origin_x_(0.0)
-    , origin_y_(0.0)
+    , map_image_dirty_(true)
 {
-    // 设置背景色和其他颜色
-    background_color_ = Qt::white;
-    wall_color_ = Qt::black;
-    unknown_color_ = Qt::gray;
-    robot_color_ = Qt::red;
-    laser_color_ = Qt::blue;
+    // 设置背景色
+    setBackgroundRole(QPalette::Base);
+    setAutoFillBackground(true);
 
-    // 设置窗口属性
-    setMinimumSize(400, 400);
-    setFocusPolicy(Qt::StrongFocus);
-    setAttribute(Qt::WA_OpaquePaintEvent);
-    
-    // 初始化视图中心为窗口中心
+    // 设置初始视图中心为窗口中心
     view_center_ = QPointF(width() / 2.0, height() / 2.0);
+
+    // 启用鼠标追踪
+    setMouseTracking(true);
 }
 
-void MapView::updateMap(const nav_msgs::OccupancyGrid::ConstPtr& map)
+void MapView::updateMap(const std::shared_ptr<nav_msgs::OccupancyGrid>& map)
 {
-    map_data_ = map;
-    resolution_ = map->info.resolution;
-    origin_x_ = map->info.origin.position.x;
-    origin_y_ = map->info.origin.position.y;
+    if (!map) return;
 
-    // 创建QImage
-    map_image_ = QImage(map->info.width, map->info.height, QImage::Format_RGB32);
-    
-    // 将地图数据转换为图像
-    for (unsigned int y = 0; y < map->info.height; ++y) {
-        for (unsigned int x = 0; x < map->info.width; ++x) {
-            int value = map->data[y * map->info.width + x];
-            QColor color;
-            if (value == -1) {
-                color = unknown_color_;
-            } else if (value >= 50) {
-                color = wall_color_;
-            } else {
-                color = background_color_;
-            }
-            map_image_.setPixel(x, map->info.height - y - 1, color.rgb());
+    // 检查是否真的需要更新地图
+    bool need_update = false;
+    if (!map_) {
+        need_update = true;
+    } else {
+        // 只有当地图数据真的改变时才更新
+        if (map_->info.width != map->info.width ||
+            map_->info.height != map->info.height ||
+            map_->info.resolution != map->info.resolution ||
+            map_->info.origin.position.x != map->info.origin.position.x ||
+            map_->info.origin.position.y != map->info.origin.position.y ||
+            map_->data != map->data) {
+            need_update = true;
         }
     }
-    
-    update();  // 触发重绘
+
+    map_ = map;
+    if (need_update) {
+        map_image_dirty_ = true;
+        update();  // 请求重绘
+    }
 }
 
-void MapView::updateRobotPose(const nav_msgs::Odometry::ConstPtr& odom)
+void MapView::updateRobotPose(const std::shared_ptr<nav_msgs::Odometry>& odom)
 {
-    robot_x_ = odom->pose.pose.position.x;
-    robot_y_ = odom->pose.pose.position.y;
-    
-    // 从四元数转换为欧拉角
-    tf::Quaternion q(
-        odom->pose.pose.orientation.x,
-        odom->pose.pose.orientation.y,
-        odom->pose.pose.orientation.z,
-        odom->pose.pose.orientation.w
-    );
-    tf::Matrix3x3 m(q);
-    double roll, pitch;
-    m.getRPY(roll, pitch, robot_theta_);
-    
-    update();  // 触发重绘
+    if (!odom) return;
+
+    robot_pose_ = odom;
+    update();  // 请求重绘
 }
 
-void MapView::updateLaserScan(const sensor_msgs::LaserScan::ConstPtr& scan)
+void MapView::updateLaserScan(const std::shared_ptr<sensor_msgs::LaserScan>& scan)
 {
-    laser_data_ = scan;
-    update();  // 触发重绘
+    if (!scan) return;
+
+    laser_scan_ = scan;
+    update();  // 请求重绘
 }
 
-void MapView::paintEvent(QPaintEvent*)
+void MapView::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    
+
     // 填充背景
-    painter.fillRect(rect(), background_color_);
-    
-    // 应用视图变换
-    painter.translate(view_center_);
-    painter.scale(scale_, -scale_);  // Y轴向上为正
-    
+    painter.fillRect(rect(), QColor(245, 245, 247));
+
+    if (!map_) {
+        // 如果没有地图数据，显示提示信息
+        painter.setPen(Qt::gray);
+        painter.drawText(rect(), Qt::AlignCenter, "等待地图数据...");
+        return;
+    }
+
+    // 计算缩放因子，使地图适应视图大小
+    double map_width = map_->info.width * map_->info.resolution;
+    double map_height = map_->info.height * map_->info.resolution;
+    double scale_x = (width() - 40) / map_width;
+    double scale_y = (height() - 40) / map_height;
+    scale_ = std::min(scale_x, scale_y);
+
+    // 保存当前变换
+    painter.save();
+
+    // 移动到视图中心
+    painter.translate(width() / 2, height() / 2);
+
+    // 应用缩放
+    painter.scale(scale_, -scale_);  // 注意Y轴需要翻转
+
+    // 移动到地图原点
+    painter.translate(-map_width/2, -map_height/2);
+
     // 绘制地图
-    drawMap(painter);
-    
-    // 绘制激光数据
-    drawLaserScan(painter);
-    
+    if (map_image_dirty_) {
+        updateMapImage();
+    }
+
+    // 使用插值来实现平滑绘制
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.drawImage(QPointF(0, 0), map_image_);
+
+    // 绘制网格（可选，帮助观察）
+    painter.setPen(QPen(QColor(200, 200, 200, 50), 0.02));  // 半透明灰色，2cm宽度
+    double grid_size = 1.0;  // 1米一个网格
+    for (double x = 0; x <= map_width; x += grid_size) {
+        painter.drawLine(QPointF(x, 0), QPointF(x, map_height));
+    }
+    for (double y = 0; y <= map_height; y += grid_size) {
+        painter.drawLine(QPointF(0, y), QPointF(map_width, y));
+    }
+
+    // 恢复变换以绘制激光扫描数据
+    painter.restore();
+    painter.save();
+    painter.translate(width() / 2, height() / 2);
+    painter.scale(scale_, -scale_);
+
+    // 绘制激光扫描数据
+    if (laser_scan_ && robot_pose_) {
+        drawLaserScan(painter);
+    }
+
+    // 恢复变换以绘制机器人
+    painter.restore();
+    painter.save();
+    painter.translate(width() / 2, height() / 2);
+    painter.scale(scale_, -scale_);
+
     // 绘制机器人
-    drawRobot(painter);
-}
+    if (robot_pose_) {
+        drawRobot(painter);
+    }
 
-void MapView::drawMap(QPainter& painter)
-{
-    if (map_image_.isNull()) return;
-    
-    // 计算地图在世界坐标系中的位置和大小
-    double map_width = map_image_.width() * resolution_;
-    double map_height = map_image_.height() * resolution_;
-    
-    // 绘制地图图像
-    painter.save();
-    painter.translate(origin_x_, origin_y_);
-    painter.scale(map_width / map_image_.width(), map_height / map_image_.height());
-    painter.drawImage(0, 0, map_image_);
     painter.restore();
-}
-
-void MapView::drawRobot(QPainter& painter)
-{
-    const double robot_radius = 0.2;  // 机器人半径（米）
-    const double arrow_length = robot_radius * 1.5;  // 方向指示箭头长度
-    
-    painter.save();
-    
-    // 移动到机器人位置
-    painter.translate(robot_x_, robot_y_);
-    painter.rotate(robot_theta_ * 180.0 / M_PI);  // 旋转到机器人朝向
-    
-    // 绘制机器人主体（圆形）
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(robot_color_);
-    painter.drawEllipse(QPointF(0, 0), robot_radius, robot_radius);
-    
-    // 绘制方向指示箭头
-    painter.setPen(QPen(robot_color_, 0.05));
-    painter.drawLine(QPointF(0, 0), QPointF(arrow_length, 0));
-    painter.drawLine(QPointF(arrow_length, 0), QPointF(arrow_length * 0.7, arrow_length * 0.3));
-    painter.drawLine(QPointF(arrow_length, 0), QPointF(arrow_length * 0.7, -arrow_length * 0.3));
-    
-    painter.restore();
-}
-
-void MapView::drawLaserScan(QPainter& painter)
-{
-    if (!laser_data_) return;
-    
-    painter.save();
-    painter.setPen(QPen(laser_color_, 0.02));
-    
-    // 移动到机器人位置
-    painter.translate(robot_x_, robot_y_);
-    painter.rotate(robot_theta_ * 180.0 / M_PI);
-    
-    // 绘制每个激光点
-    double angle = laser_data_->angle_min;
-    for (const float range : laser_data_->ranges) {
-        if (std::isfinite(range) && range >= laser_data_->range_min && range <= laser_data_->range_max) {
-            double x = range * cos(angle);
-            double y = range * sin(angle);
-            painter.drawPoint(QPointF(x, y));
-        }
-        angle += laser_data_->angle_increment;
-    }
-    
-    painter.restore();
-}
-
-QPointF MapView::mapToScreen(double x, double y) const
-{
-    return QPointF(x * scale_ + view_center_.x(), -y * scale_ + view_center_.y());
-}
-
-QPointF MapView::screenToMap(double x, double y) const
-{
-    return QPointF((x - view_center_.x()) / scale_, -(y - view_center_.y()) / scale_);
-}
-
-void MapView::wheelEvent(QWheelEvent* event)
-{
-    // 计算缩放因子
-    double factor = event->delta() > 0 ? 1.1 : 0.9;
-    
-    // 获取鼠标位置对应的地图坐标
-    QPointF mouse_map_pos = screenToMap(event->pos().x(), event->pos().y());
-    
-    // 更新缩放比例
-    scale_ *= factor;
-    
-    // 调整视图中心，使鼠标指向的地图点保持不变
-    QPointF new_screen_pos = mapToScreen(mouse_map_pos.x(), mouse_map_pos.y());
-    view_center_ += event->pos() - new_screen_pos;
-    
-    update();
-}
-
-void MapView::mousePressEvent(QMouseEvent* event)
-{
-    if (event->button() == Qt::LeftButton) {
-        is_dragging_ = true;
-        drag_start_ = event->pos();
-    }
-}
-
-void MapView::mouseMoveEvent(QMouseEvent* event)
-{
-    if (is_dragging_) {
-        QPointF delta = event->pos() - drag_start_;
-        view_center_ += delta;
-        drag_start_ = event->pos();
-        update();
-    }
-}
-
-void MapView::mouseReleaseEvent(QMouseEvent* event)
-{
-    if (event->button() == Qt::LeftButton) {
-        is_dragging_ = false;
-    }
 }
 
 void MapView::resizeEvent(QResizeEvent* event)
@@ -236,4 +150,110 @@ void MapView::resizeEvent(QResizeEvent* event)
     // 更新视图中心为窗口中心
     view_center_ = QPointF(width() / 2.0, height() / 2.0);
     QWidget::resizeEvent(event);
+}
+
+QPointF MapView::mapToScreen(double x, double y) const
+{
+    // 将地图坐标转换为屏幕坐标
+    return QPointF(x * scale_, -y * scale_);  // 注意Y轴需要翻转
+}
+
+QPointF MapView::screenToMap(double x, double y) const
+{
+    // 将屏幕坐标转换为地图坐标
+    return QPointF(x / scale_, -y / scale_);  // 注意Y轴需要翻转
+}
+
+void MapView::updateMapImage()
+{
+    if (!map_) return;
+
+    int width = map_->info.width;
+    int height = map_->info.height;
+    
+    // 如果图像尺寸不对，重新创建图像
+    if (map_image_.isNull() || map_image_.width() != width || map_image_.height() != height) {
+        map_image_ = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+    }
+    
+    map_image_.fill(Qt::transparent);
+    
+    // 填充地图数据
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int value = map_->data[y * width + x];
+            QColor color;
+            if (value == -1) {
+                color = QColor(200, 200, 200, 100);  // 未知区域，半透明灰色
+            } else if (value == 0) {
+                color = QColor(255, 255, 255, 0);    // 空闲区域，透明
+            } else {
+                color = QColor(40, 40, 40);          // 障碍物，深灰色
+            }
+            map_image_.setPixelColor(x, height - y - 1, color);  // 注意Y轴翻转
+        }
+    }
+    
+    map_image_dirty_ = false;
+}
+
+void MapView::drawRobot(QPainter& painter)
+{
+    if (!robot_pose_) return;
+
+    // 获取机器人位置
+    double x = robot_pose_->pose.pose.position.x;
+    double y = robot_pose_->pose.pose.position.y;
+    
+    // 计算机器人朝向
+    double qz = robot_pose_->pose.pose.orientation.z;
+    double qw = robot_pose_->pose.pose.orientation.w;
+    double yaw = 2.0 * std::atan2(qz, qw);
+
+    // 设置机器人外观
+    painter.save();
+    painter.translate(x, y);
+    painter.rotate(yaw * 180.0 / M_PI);
+
+    // 绘制机器人主体（红色圆形）
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(231, 76, 60));  // 红色
+    painter.drawEllipse(QPointF(0, 0), 0.2, 0.2);  // 20cm半径
+
+    // 绘制朝向指示器（白色三角形）
+    painter.setBrush(Qt::white);
+    QPolygonF direction;
+    direction << QPointF(0.1, 0) << QPointF(-0.1, 0.1) << QPointF(-0.1, -0.1);
+    painter.drawPolygon(direction);
+
+    painter.restore();
+}
+
+void MapView::drawLaserScan(QPainter& painter)
+{
+    if (!laser_scan_ || !robot_pose_) return;
+
+    // 获取机器人位置和朝向
+    double robot_x = robot_pose_->pose.pose.position.x;
+    double robot_y = robot_pose_->pose.pose.position.y;
+    double qz = robot_pose_->pose.pose.orientation.z;
+    double qw = robot_pose_->pose.pose.orientation.w;
+    double robot_yaw = 2.0 * std::atan2(qz, qw);
+
+    // 设置激光点的样式
+    painter.setPen(QPen(QColor(52, 152, 219, 150), 0.02));  // 半透明蓝色，2cm宽度
+
+    // 绘制激光点
+    float angle = laser_scan_->angle_min;
+    for (const float& range : laser_scan_->ranges) {
+        if (std::isfinite(range) && range >= laser_scan_->range_min && range <= laser_scan_->range_max) {
+            // 计算激光点在地图坐标系中的位置
+            double point_x = robot_x + range * std::cos(robot_yaw + angle);
+            double point_y = robot_y + range * std::sin(robot_yaw + angle);
+            
+            // 绘制激光点
+            painter.drawPoint(QPointF(point_x, point_y));
+        }
+        angle += laser_scan_->angle_increment;
+    }
 } 
