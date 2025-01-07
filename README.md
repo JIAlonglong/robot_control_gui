@@ -9,6 +9,12 @@
   - 键盘控制（方向键和空格键）
   - 紧急停止功能
 
+- 路径规划
+  - 多种规划算法（Dijkstra、A*、RRT、RRT*）
+  - 可配置的启发式函数
+  - 规划参数实时调整
+  - 规划过程可视化
+
 - 可视化显示
   - 集成 RViz 显示地图和机器人模型
   - 激光扫描数据可视化
@@ -84,6 +90,7 @@ roslaunch robot_control_gui robot_control_gui.launch
 ## 文档
 
 - [开发文档](docs/development/README.md) - 了解详细的开发信息
+- [路径规划说明](docs/development/path_planning.md) - 路径规划功能的使用和开发指南
 - [更新日志](CHANGELOG.md) - 查看版本更新历史
 
 ## 版本
