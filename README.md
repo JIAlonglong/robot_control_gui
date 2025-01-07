@@ -1,81 +1,91 @@
-# 多机器人通用Qt控制界面
+# Robot Control GUI
 
-## 项目概述
-这是一个基于Qt和ROS开发的多机器人通用控制界面，旨在提供一个灵活、可扩展的图形用户界面，支持多种机器人的远程控制、状态监控、SLAM建图、路径规划等功能。
+这是一个基于 ROS 和 Qt 的 TurtleBot3 机器人控制界面，提供了直观的可视化控制和状态监控功能。
 
-## 主要功能
-- 遥控控制：虚拟摇杆和方向键控制
-- 实时状态监控：电量、运行模式等
-- SLAM建图和导航
-- 传感器数据可视化
-- 运动参数曲线显示
-- 可扩展的插件系统
+## 功能特性
 
-## 系统要求
-- Ubuntu 20.04 或更高版本
+- 机器人控制
+  - 虚拟摇杆控制（线速度和角速度）
+  - 键盘控制（方向键和空格键）
+  - 紧急停止功能
+
+- 可视化显示
+  - 集成 RViz 显示地图和机器人模型
+  - 激光扫描数据可视化
+  - 导航路径显示
+  - 目标点设置和显示
+
+- 状态监控
+  - 机器人状态显示（电池、WiFi信号等）
+  - 速度仪表盘
+  - 自动检测和提示机器人模型显示问题
+
+## 依赖项
+
 - ROS Noetic
-- Qt 5.12 或更高版本
-- C++14 或更高版本
+- Qt 5
+- RViz
+- TurtleBot3 相关包
 
-## 快速开始
-1. 克隆仓库：
+## 安装
+
+1. 克隆仓库到工作空间：
 ```bash
-git clone [repository-url]
+cd ~/catkin_ws/src
+git clone <repository_url> robot_control_gui
 ```
 
 2. 安装依赖：
 ```bash
-sudo apt-get install ros-noetic-desktop-full
-sudo apt-get install qt5-default
+sudo apt-get install ros-noetic-rviz
+sudo apt-get install ros-noetic-turtlebot3
+sudo apt-get install ros-noetic-turtlebot3-msgs
 ```
 
 3. 编译：
 ```bash
-cd [workspace]
+cd ~/catkin_ws
 catkin_make
 ```
 
-4. 运行：
+## 使用方法
+
+1. 启动 TurtleBot3 仿真（或实体机器人）：
 ```bash
-source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+roslaunch turtlebot3_gazebo turtlebot3_world.launch
+```
+
+2. 启动控制界面：
+```bash
 roslaunch robot_control_gui robot_control_gui.launch
 ```
 
-## 项目结构
-```
-robot_control_gui/
-├── include/          # 头文件
-├── src/             # 源代码
-│   ├── ui/          # GUI相关代码
-│   ├── ros/         # ROS通信相关代码
-│   ├── core/        # 核心功能实现
-│   └── test/        # 测试代码
-├── launch/          # ROS启动文件
-├── docs/            # 文档
-└── maps/            # 地图文件
-```
+### 控制说明
+
+- 左侧虚拟摇杆：控制线速度（上下移动）
+- 右侧虚拟摇杆：控制角速度（左右移动）
+- 键盘控制：
+  - ↑：前进
+  - ↓：后退
+  - ←：左转
+  - →：右转
+  - 空格：紧急停止
+
+### 显示选项
+
+- 网格显示
+- 地图显示
+- 机器人模型
+- 激光扫描数据
+- 导航路径
+- 目标点
 
 ## 文档
-详细文档请参考 `docs` 目录：
-- [设计文档](docs/design/README.md)
-- [API文档](docs/api/README.md)
-- [开发指南](docs/development/README.md)
 
-## 开发规范
-- 代码注释遵循Doxygen标准
-- 使用Google C++代码风格
-- 所有新功能必须包含单元测试
-- 提交前必须通过所有测试
+- [开发文档](docs/development/README.md) - 了解详细的开发信息
+- [更新日志](CHANGELOG.md) - 查看版本更新历史
 
-## 贡献指南
-1. Fork 项目
-2. 创建功能分支
-3. 提交更改
-4. 推送到分支
-5. 创建Pull Request
+## 版本
 
-## 许可证
-[待定]
-
-## 联系方式
-[待补充] 
+当前版本：0.2.0 - 查看 [更新日志](CHANGELOG.md) 了解详细更改。 

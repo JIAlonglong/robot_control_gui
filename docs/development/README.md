@@ -1,162 +1,113 @@
-# 开发指南
+# 开发文档
 
-## 1. 开发环境设置
+## 项目结构
 
-### 1.1 必要软件
-- Ubuntu 20.04
-- ROS Noetic
-- Qt 5.12+
-- CMake 3.10+
-- Git
-
-### 1.2 推荐IDE
-- Qt Creator
-- VSCode + ROS插件
-- CLion
-
-## 2. 代码规范
-
-### 2.1 命名规范
-- 类名：大驼峰命名法（PascalCase）
-- 函数名：小驼峰命名法（camelCase）
-- 变量名：下划线命名法（snake_case）
-- 常量：全大写加下划线（UPPER_SNAKE_CASE）
-- 文件名：小写加下划线（snake_case）
-
-### 2.2 注释规范
-所有代码必须遵循Doxygen注释标准：
-
-```cpp
-/**
- * @brief 类的简要描述
- * 
- * 类的详细描述，包括用途、功能等
- */
-class ExampleClass {
-public:
-    /**
-     * @brief 函数的简要描述
-     * @param param1 参数1的描述
-     * @param param2 参数2的描述
-     * @return 返回值的描述
-     * @throw 可能抛出的异常
-     */
-    int exampleFunction(int param1, std::string param2);
-};
+```
+robot_control_gui/
+├── include/          # 头文件
+│   ├── ui/          # 界面相关头文件
+│   └── ros/         # ROS通信相关头文件
+├── src/             # 源代码
+│   ├── ui/          # 界面实现
+│   ├── ros/         # ROS通信实现
+│   ├── test/        # 测试代码
+│   └── launch/      # 启动文件
+├── config/          # 配置文件
+├── rviz/            # RViz配置
+└── docs/            # 文档
 ```
 
-### 2.3 文件组织
-- 每个类一个头文件（.h）和源文件（.cpp）
-- 实现文件与头文件目录结构对应
-- 测试文件放在test目录下
-- 插件相关文件放在plugins目录下
+## 主要组件
 
-## 3. 开发流程
+### 1. 界面组件
 
-### 3.1 Git工作流
-1. 从master分支创建功能分支
-2. 在功能分支上开发
-3. 提交前进行代码审查
-4. 合并到master分支
+#### RVizView
+- 文件：`include/ui/rviz_view.h` 和 `src/ui/rviz_view.cpp`
+- 功能：集成 RViz 显示，提供地图、机器人模型、激光扫描等可视化
+- 特性：
+  - 自动检测机器人模型显示问题
+  - 支持显示选项控制
+  - 支持设置导航目标点
 
-### 3.2 提交规范
-提交信息格式：
-```
-<type>(<scope>): <subject>
+#### JoystickWidget
+- 文件：`include/ui/joystick_widget.h` 和 `src/ui/joystick_widget.cpp`
+- 功能：虚拟摇杆控制
+- 特性：
+  - 支持鼠标和触摸操作
+  - 可配置活动区域和限制范围
+  - 发送位置变化信号
 
-<body>
+#### RobotStatusPanel
+- 文件：`include/ui/robot_status_panel.h` 和 `src/ui/robot_status_panel.cpp`
+- 功能：显示机器人状态信息
+- 特性：
+  - 电池电量显示
+  - WiFi信号强度显示
+  - 运行状态显示
 
-<footer>
-```
+#### SpeedDashboard
+- 文件：`include/ui/speed_dashboard.h` 和 `src/ui/speed_dashboard.cpp`
+- 功能：速度仪表盘显示
+- 特性：
+  - 线速度显示
+  - 角速度显示
 
-类型（type）：
-- feat: 新功能
-- fix: 修复bug
-- docs: 文档更新
-- style: 代码格式修改
-- refactor: 重构
-- test: 测试用例
-- chore: 构建过程或辅助工具的变动
+### 2. ROS通信
 
-### 3.3 代码审查清单
-- 代码是否符合规范
-- 是否包含适当的注释
-- 是否编写了单元测试
-- 是否处理了异常情况
-- 是否有内存泄漏风险
-- 是否符合性能要求
+#### RobotController
+- 文件：`include/ros/robot_controller.h` 和 `src/ros/robot_controller.cpp`
+- 功能：处理与ROS系统的通信
+- 特性：
+  - 发布速度命令
+  - 处理导航目标
+  - 管理机器人状态
+  - 处理传感器数据
 
-## 4. 测试规范
+## 开发指南
 
-### 4.1 单元测试
-- 使用Google Test框架
-- 测试覆盖率要求 > 80%
-- 测试文件命名：`*_test.cpp`
+### 添加新的显示组件
 
-### 4.2 集成测试
-- 测试跨模块功能
-- 测试ROS通信
-- 测试GUI交互
+1. 在 `include/ui` 目录下创建头文件
+2. 在 `src/ui` 目录下创建实现文件
+3. 在 `MainWindow` 类中集成新组件
+4. 在 `CMakeLists.txt` 中添加新文件
 
-## 5. 插件开发
+### 添加新的ROS功能
 
-### 5.1 插件接口
-```cpp
-class IPlugin {
-public:
-    virtual void initialize() = 0;
-    virtual void shutdown() = 0;
-    virtual std::string getName() = 0;
-    virtual std::string getVersion() = 0;
-};
-```
+1. 在 `RobotController` 类中添加新的方法
+2. 添加必要的ROS消息类型
+3. 实现消息处理函数
+4. 在界面中添加相应的控制元素
 
-### 5.2 插件开发步骤
-1. 创建插件类
-2. 实现插件接口
-3. 注册插件
-4. 编写配置文件
-5. 测试插件功能
+### 编码规范
 
-## 6. 调试指南
+- 使用驼峰命名法
+- 类名首字母大写
+- 成员变量以下划线结尾
+- 添加必要的注释
+- 保持代码整洁和可读性
 
-### 6.1 日志级别
-- ERROR: 错误信息
-- WARN: 警告信息
-- INFO: 一般信息
-- DEBUG: 调试信息
-- TRACE: 跟踪信息
+### 测试
 
-### 6.2 调试工具
-- QDebug
-- ROS console
-- GDB
-- Qt Creator调试器
-- rqt工具集
+- 单元测试位于 `src/test` 目录
+- 使用 Google Test 框架
+- 运行测试：`catkin build --catkin-make-args run_tests`
 
-## 7. 性能优化
+## 调试提示
 
-### 7.1 代码级优化
-- 使用引用代替值传递
-- 避免不必要的内存分配
-- 合理使用智能指针
-- 避免频繁的字符串操作
+### 常见问题
 
-### 7.2 系统级优化
-- 使用线程池
-- 实现数据缓存
-- 优化ROS通信频率
-- 减少GUI刷新开销
+1. 机器人模型不可见
+   - 检查 robot_description 参数
+   - 检查 TF 变换
+   - 检查固定坐标系设置
 
-## 8. 文档维护
+2. 地图显示问题
+   - 确认地图服务器是否运行
+   - 检查地图话题是否正确
+   - 验证坐标系转换
 
-### 8.1 文档类型
-- API文档（Doxygen生成）
-- 用户手册
-- 开发指南
-- 部署文档
-
-### 8.2 文档更新
-- 代码变更时同步更新文档
-- 定期检查文档准确性
-- 维护文档版本历史 
+3. 控制问题
+   - 检查 cmd_vel 话题
+   - 验证速度限制设置
+   - 确认机器人状态 
