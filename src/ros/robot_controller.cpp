@@ -48,13 +48,27 @@ RobotController::RobotController(QObject* parent)
     odom_sub_ = nh_.subscribe(odom_topic, 1, &RobotController::odomCallback, this);
     scan_sub_ = nh_.subscribe(scan_topic, 1, &RobotController::scanCallback, this);
 
-    // 创建action客户端
-    move_base_client_ = std::make_shared<MoveBaseClient>("move_base", true);
+    // 创建action客户端并设置超时
+    move_base_client_ = std::make_shared<MoveBaseClient>("move_base", false);  // 设置为false表示不自动启动
     
-    // 等待action服务器
     ROS_INFO("Waiting for move_base action server...");
-    move_base_client_->waitForServer();
-    ROS_INFO("Connected to move_base action server");
+    ros::Time start_time = ros::Time::now();
+    ros::Duration timeout(5.0);  // 5秒超时
+    
+    while (ros::ok() && !move_base_client_->isServerConnected()) {
+        if (ros::Time::now() - start_time > timeout) {
+            ROS_WARN("Move base server connection timeout after 5 seconds");
+            emit statusChanged("导航服务器未连接，部分功能可能不可用");
+            return;
+        }
+        ros::Duration(0.1).sleep();
+        ros::spinOnce();
+    }
+    
+    if (move_base_client_->isServerConnected()) {
+        ROS_INFO("Connected to move_base action server");
+        emit statusChanged("导航服务器连接成功");
+    }
 }
 
 RobotController::~RobotController()
@@ -71,12 +85,14 @@ bool RobotController::setNavigationGoal(double x, double y, double theta)
 {
     if (!move_base_client_->isServerConnected()) {
         ROS_ERROR("Navigation server is not connected");
+        updateNavigationState(NavigationState::FAILED, "导航服务器未连接");
         return false;
     }
 
     // 如果正在建图，不允许导航
     if (is_mapping_) {
         ROS_WARN("Cannot navigate while mapping is active");
+        updateNavigationState(NavigationState::FAILED, "正在建图中，无法导航");
         return false;
     }
 
@@ -95,6 +111,10 @@ bool RobotController::setNavigationGoal(double x, double y, double theta)
     goal.target_pose.pose.orientation.y = q.y();
     goal.target_pose.pose.orientation.z = q.z();
 
+    // 保存当前目标点
+    current_goal_ = goal.target_pose;
+    goal_distance_ = 0.0;  // 将在feedback回调中更新
+
     // 根据导航模式设置参数
     switch (navigation_mode_) {
         case 1: // 快速模式
@@ -111,6 +131,7 @@ bool RobotController::setNavigationGoal(double x, double y, double theta)
             break;
     }
 
+    updateNavigationState(NavigationState::PLANNING, "正在规划路径...");
     move_base_client_->sendGoal(goal,
         boost::bind(&RobotController::doneCallback, this, _1, _2),
         boost::bind(&RobotController::activeCallback, this),
@@ -126,6 +147,7 @@ void RobotController::cancelNavigation()
     if (is_navigating_ && move_base_client_->isServerConnected()) {
         move_base_client_->cancelAllGoals();
         is_navigating_ = false;
+        updateNavigationState(NavigationState::CANCELED, "导航已取消");
         ROS_INFO("Navigation cancelled");
     }
 }
@@ -134,17 +156,83 @@ void RobotController::doneCallback(const actionlib::SimpleClientGoalState& state
                                  const move_base_msgs::MoveBaseResultConstPtr& result)
 {
     is_navigating_ = false;
+    
+    switch (state.state_) {
+        case actionlib::SimpleClientGoalState::SUCCEEDED:
+            updateNavigationState(NavigationState::SUCCEEDED, "已到达目标点");
+            break;
+        case actionlib::SimpleClientGoalState::ABORTED:
+            updateNavigationState(NavigationState::FAILED, "导航失败：无法到达目标点");
+            break;
+        case actionlib::SimpleClientGoalState::REJECTED:
+            updateNavigationState(NavigationState::FAILED, "导航失败：目标点无效");
+            break;
+        case actionlib::SimpleClientGoalState::PREEMPTED:
+            updateNavigationState(NavigationState::CANCELED, "导航已取消");
+            break;
+        default:
+            updateNavigationState(NavigationState::FAILED, 
+                QString("导航失败：%1").arg(state.getText().c_str()));
+            break;
+    }
+    
     ROS_INFO("Navigation finished with state: %s", state.toString().c_str());
 }
 
 void RobotController::activeCallback()
 {
-    ROS_INFO("Goal just went active");
+    updateNavigationState(NavigationState::MOVING, "正在移动到目标点...");
+    ROS_INFO("Navigation goal is now active");
 }
 
 void RobotController::feedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback)
 {
-    // 可以在这里处理导航反馈
+    // 更新导航进度
+    updateNavigationProgress(feedback->base_position);
+    
+    // 根据距离判断导航状态
+    if (goal_distance_ < 0.1) {  // 接近目标点
+        updateNavigationState(NavigationState::ADJUSTING, "正在微调位置...");
+    } else if (goal_distance_ < 0.5) {  // 接近但还需要调整
+        updateNavigationState(NavigationState::ROTATING, "正在调整朝向...");
+    } else {
+        updateNavigationState(NavigationState::MOVING, 
+            QString("距离目标点还有 %.1f 米").arg(goal_distance_));
+    }
+}
+
+void RobotController::updateNavigationProgress(const geometry_msgs::PoseStamped& current_pose)
+{
+    if (!is_navigating_) return;
+    
+    // 计算当前位置到目标点的距离
+    goal_distance_ = calculateDistance(current_pose, current_goal_);
+    
+    // 估算导航进度（基于距离）
+    double initial_distance = calculateDistance(current_goal_, current_pose);
+    if (initial_distance > 0) {
+        nav_progress_ = std::max(0.0, std::min(1.0, 1.0 - (goal_distance_ / initial_distance)));
+        emit navigationProgressChanged(nav_progress_);
+    }
+}
+
+double RobotController::calculateDistance(const geometry_msgs::PoseStamped& pose1,
+                                       const geometry_msgs::PoseStamped& pose2)
+{
+    double dx = pose1.pose.position.x - pose2.pose.position.x;
+    double dy = pose1.pose.position.y - pose2.pose.position.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+void RobotController::updateNavigationState(NavigationState state, const QString& status)
+{
+    nav_state_ = state;
+    if (!status.isEmpty()) {
+        nav_status_text_ = status;
+        emit navigationFeedback(status);
+    }
+    emit navigationStateChanged(state);
+    emit statusChanged(nav_status_text_);
 }
 
 bool RobotController::isNavigating() const
@@ -346,16 +434,52 @@ void RobotController::scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg)
 
 void RobotController::setLinearVelocity(double velocity)
 {
-    // 限制速度在最大值范围内
-    current_linear_velocity_ = std::max(-max_linear_velocity_, 
-                                      std::min(velocity, max_linear_velocity_));
+    current_linear_velocity_ = std::max(-max_linear_velocity_, std::min(velocity, max_linear_velocity_));
     publishVelocity(current_linear_velocity_, current_angular_velocity_);
 }
 
 void RobotController::setAngularVelocity(double velocity)
 {
-    // 限制速度在最大值范围内
-    current_angular_velocity_ = std::max(-max_angular_velocity_,
-                                       std::min(velocity, max_angular_velocity_));
+    current_angular_velocity_ = std::max(-max_angular_velocity_, std::min(velocity, max_angular_velocity_));
     publishVelocity(current_linear_velocity_, current_angular_velocity_);
+}
+
+bool RobotController::setParam(const QString& name, const QString& value)
+{
+    try {
+        nh_.setParam(name.toStdString(), value.toStdString());
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool RobotController::setParam(const QString& name, double value)
+{
+    try {
+        nh_.setParam(name.toStdString(), value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool RobotController::setParam(const QString& name, bool value)
+{
+    try {
+        nh_.setParam(name.toStdString(), value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool RobotController::setParam(const QString& name, int value)
+{
+    try {
+        nh_.setParam(name.toStdString(), value);
+        return true;
+    } catch (...) {
+        return false;
+    }
 } 
