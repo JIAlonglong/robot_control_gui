@@ -48,12 +48,28 @@ public:
 
     // 速度控制
     void publishVelocity(double linear, double angular);
+    void setLinearVelocity(double velocity);
+    void setAngularVelocity(double velocity);
+    double getMaxLinearVelocity() const { return max_linear_velocity_; }
+    double getMaxAngularVelocity() const { return max_angular_velocity_; }
+    double getCurrentLinearVelocity() const { return current_linear_velocity_; }
+    double getCurrentAngularVelocity() const { return current_angular_velocity_; }
+
+    // 导航控制
+    void startNavigation();
+    void stopNavigation();
+
+    // 状态查询
+    double getBatteryLevel() const { return battery_level_; }
+    int getWifiStrength() const { return wifi_strength_; }
+    QString getStatus() const { return status_; }
 
 signals:
     // 数据更新信号
     void mapUpdated(const std::shared_ptr<nav_msgs::OccupancyGrid>& map);
     void odomUpdated(const std::shared_ptr<nav_msgs::Odometry>& odom);
     void scanUpdated(const std::shared_ptr<sensor_msgs::LaserScan>& scan);
+    void statusChanged(const QString& status);
 
 private:
     // ROS节点句柄
@@ -77,6 +93,13 @@ private:
     int navigation_mode_;
     double max_linear_velocity_;
     double max_angular_velocity_;
+    double current_linear_velocity_ = 0.0;
+    double current_angular_velocity_ = 0.0;
+
+    // 状态信息
+    double battery_level_ = 100.0;  // 电池电量（百分比）
+    int wifi_strength_ = 100;      // WiFi信号强度（百分比）
+    QString status_ = "就绪";      // 机器人状态
 
     // ROS回调函数
     void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg);

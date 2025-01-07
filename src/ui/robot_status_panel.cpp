@@ -6,157 +6,139 @@
 #include "ui/robot_status_panel.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFrame>
+#include <QGroupBox>
 
 RobotStatusPanel::RobotStatusPanel(QWidget* parent)
     : QWidget(parent)
-    , battery_label_(new QLabel("Battery:", this))
-    , battery_progress_(new QProgressBar(this))
-    , velocity_label_(new QLabel("Velocity: 0.0 m/s, 0.0 rad/s", this))
-    , mode_label_(new QLabel("Mode: Standby", this))
 {
-    setupUI();
-}
-
-void RobotStatusPanel::setupUI()
-{
+    // 创建主布局
     QVBoxLayout* main_layout = new QVBoxLayout(this);
-    main_layout->setSpacing(20);  // 增加组件间距
-    main_layout->setContentsMargins(20, 20, 20, 20);  // 增加边距
     
-    // Battery status
-    QHBoxLayout* battery_layout = new QHBoxLayout();
-    battery_layout->setSpacing(10);
+    // 创建状态组
+    QGroupBox* status_group = new QGroupBox(tr("机器人状态"), this);
+    QVBoxLayout* status_layout = new QVBoxLayout(status_group);
     
-    battery_label_->setText("Battery");  // 移除冒号，更简洁
-    battery_label_->setStyleSheet(R"(
-        QLabel {
-            color: #2c3e50;
-            font-size: 14pt;
-            font-weight: 500;
-        }
-    )");
+    // 创建状态标签
+    status_label_ = new QLabel(tr("状态: 就绪"), this);
+    status_label_->setStyleSheet("font-weight: bold;");
     
-    battery_progress_->setRange(0, 100);
-    battery_progress_->setTextVisible(true);
-    battery_progress_->setValue(100);
-    battery_progress_->setStyleSheet(R"(
+    // 创建电池状态
+    QWidget* battery_widget = new QWidget(this);
+    QHBoxLayout* battery_layout = new QHBoxLayout(battery_widget);
+    battery_label_ = new QLabel(tr("电池电量:"), this);
+    battery_bar_ = new QProgressBar(this);
+    battery_bar_->setRange(0, 100);
+    battery_bar_->setValue(100);
+    battery_bar_->setStyleSheet(R"(
         QProgressBar {
+            border: 1px solid #ccc;
+            border-radius: 5px;
             text-align: center;
-            min-height: 25px;
-            max-height: 25px;
-            border: none;
-            border-radius: 12px;
-            background-color: #f5f6fa;
-            font-size: 12pt;
-            font-weight: bold;
         }
         QProgressBar::chunk {
-            border-radius: 12px;
-            background-color: #2ecc71;
+            background-color: #4CAF50;
+            border-radius: 5px;
         }
     )");
-    
     battery_layout->addWidget(battery_label_);
-    battery_layout->addWidget(battery_progress_, 1);  // 进度条占据更多空间
+    battery_layout->addWidget(battery_bar_);
     
-    // Velocity and Mode section
-    velocity_label_->setText("Velocity: 0.0 m/s, 0.0 rad/s");
-    velocity_label_->setStyleSheet(R"(
-        QLabel {
-            color: #2c3e50;
-            font-size: 14pt;
-            font-weight: 500;
-            padding: 10px;
-            background-color: #f5f6fa;
-            border-radius: 10px;
+    // 创建WiFi状态
+    QWidget* wifi_widget = new QWidget(this);
+    QHBoxLayout* wifi_layout = new QHBoxLayout(wifi_widget);
+    wifi_label_ = new QLabel(tr("WiFi信号:"), this);
+    wifi_bar_ = new QProgressBar(this);
+    wifi_bar_->setRange(0, 100);
+    wifi_bar_->setValue(100);
+    wifi_bar_->setStyleSheet(R"(
+        QProgressBar {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background-color: #2196F3;
+            border-radius: 5px;
         }
     )");
+    wifi_layout->addWidget(wifi_label_);
+    wifi_layout->addWidget(wifi_bar_);
     
-    mode_label_->setText("Mode: Standby");
-    mode_label_->setStyleSheet(R"(
-        QLabel {
-            color: #2c3e50;
-            font-size: 14pt;
-            font-weight: 500;
-            padding: 10px;
-            background-color: #f5f6fa;
-            border-radius: 10px;
-        }
-    )");
+    // 添加到状态布局
+    status_layout->addWidget(status_label_);
+    status_layout->addWidget(battery_widget);
+    status_layout->addWidget(wifi_widget);
     
-    // Add to main layout
-    main_layout->addLayout(battery_layout);
-    main_layout->addWidget(velocity_label_);
-    main_layout->addWidget(mode_label_);
+    // 添加到主布局
+    main_layout->addWidget(status_group);
     main_layout->addStretch();
     
-    // Set panel style
+    // 设置样式
     setStyleSheet(R"(
-        RobotStatusPanel {
-            background-color: white;
-            border-radius: 15px;
-            border: 1px solid #e0e0e0;
+        QGroupBox {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            margin-top: 1ex;
+            padding: 10px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 3px;
+        }
+        QLabel {
+            color: #333;
         }
     )");
 }
 
-void RobotStatusPanel::updateBatteryLevel(int percentage)
+void RobotStatusPanel::updateBatteryLevel(double level)
 {
-    battery_progress_->setValue(percentage);
+    battery_bar_->setValue(static_cast<int>(level));
     
+    // 根据电量设置颜色
     QString color;
-    if (percentage < 20) {
-        color = "#e74c3c";  // 红色
-    } else if (percentage < 50) {
-        color = "#f1c40f";  // 黄色
-    } else {
-        color = "#2ecc71";  // 绿色
-    }
+    if (level > 60) color = "#4CAF50";  // 绿色
+    else if (level > 20) color = "#FFC107";  // 黄色
+    else color = "#F44336";  // 红色
     
-    battery_progress_->setStyleSheet(QString(R"(
+    battery_bar_->setStyleSheet(QString(R"(
         QProgressBar {
+            border: 1px solid #ccc;
+            border-radius: 5px;
             text-align: center;
-            min-height: 25px;
-            max-height: 25px;
-            border: none;
-            border-radius: 12px;
-            background-color: #f5f6fa;
-            font-size: 12pt;
-            font-weight: bold;
         }
         QProgressBar::chunk {
-            border-radius: 12px;
             background-color: %1;
+            border-radius: 5px;
         }
     )").arg(color));
 }
 
-void RobotStatusPanel::updateVelocity(double linear_x, double angular_z)
+void RobotStatusPanel::updateWifiStrength(int strength)
 {
-    QString text = QString("Velocity: %1 m/s, %2 rad/s")
-        .arg(QString::number(linear_x, 'f', 2))
-        .arg(QString::number(angular_z, 'f', 2));
-    velocity_label_->setText(text);
+    wifi_bar_->setValue(strength);
+    
+    // 根据信号强度设置颜色
+    QString color;
+    if (strength > 60) color = "#2196F3";  // 蓝色
+    else if (strength > 20) color = "#FFC107";  // 黄色
+    else color = "#F44336";  // 红色
+    
+    wifi_bar_->setStyleSheet(QString(R"(
+        QProgressBar {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background-color: %1;
+            border-radius: 5px;
+        }
+    )").arg(color));
 }
 
-void RobotStatusPanel::updateWorkMode(const QString& mode)
+void RobotStatusPanel::updateStatus(const QString& status)
 {
-    QString text = QString("Mode: %1").arg(mode);
-    mode_label_->setText(text);
-    
-    // 根据模式设置不同的背景色
-    QString bgColor = (mode == "Auto") ? "#e8f5e9" : "#fff3e0";
-    QString textColor = (mode == "Auto") ? "#2e7d32" : "#e65100";
-    
-    mode_label_->setStyleSheet(QString(R"(
-        QLabel {
-            color: %1;
-            font-size: 14pt;
-            font-weight: 500;
-            padding: 10px;
-            background-color: %2;
-            border-radius: 10px;
-        }
-    )").arg(textColor, bgColor));
+    status_label_->setText(tr("状态: %1").arg(status));
 } 

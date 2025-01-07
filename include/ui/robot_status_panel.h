@@ -11,29 +11,17 @@ class RobotStatusPanel : public QWidget {
 public:
     explicit RobotStatusPanel(QWidget* parent = nullptr);
 
-    void setBatteryLevel(double level);
-    double getBatteryLevel() const { return battery_level_; }
-    
-    void setConnected(bool connected);
-    bool isConnected() const { return is_connected_; }
-    
-    void updateVelocity(double linear, double angular);
-    void updateBatteryLevel(int percentage);
-    void updateWorkMode(const QString& mode);
+    // 更新状态
+    void updateBatteryLevel(double level);
+    void updateWifiStrength(int strength);
+    void updateStatus(const QString& status);
 
 private:
+    QProgressBar* battery_bar_;
+    QProgressBar* wifi_bar_;
+    QLabel* status_label_;
     QLabel* battery_label_;
-    QLabel* connection_label_;
-    QLabel* velocity_label_;
-    QProgressBar* battery_progress_;
-    QLabel* mode_label_;
-    
-    double battery_level_;
-    bool is_connected_;
-    
-    void updateBatteryDisplay();
-    void updateConnectionDisplay();
-    void setupUI();
+    QLabel* wifi_label_;
 };
 
 #endif // ROBOT_STATUS_PANEL_H 

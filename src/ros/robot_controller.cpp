@@ -22,6 +22,8 @@ RobotController::RobotController(QObject* parent)
     , is_navigating_(false)
     , is_mapping_(false)
     , navigation_mode_(0)
+    , max_linear_velocity_(0.22)  // TurtleBot3 Burger的最大线速度
+    , max_angular_velocity_(2.84) // TurtleBot3 Burger的最大角速度
 {
     // 从参数服务器读取配置
     ros::NodeHandle private_nh("~");
@@ -326,4 +328,18 @@ void RobotController::scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg)
 {
     auto scan = std::make_shared<sensor_msgs::LaserScan>(*msg);
     emit scanUpdated(scan);
+}
+
+void RobotController::setLinearVelocity(double velocity)
+{
+    // 限制线速度在最大值范围内
+    velocity = std::max(-max_linear_velocity_, std::min(velocity, max_linear_velocity_));
+    publishVelocity(velocity, 0.0);
+}
+
+void RobotController::setAngularVelocity(double velocity)
+{
+    // 限制角速度在最大值范围内
+    velocity = std::max(-max_angular_velocity_, std::min(velocity, max_angular_velocity_));
+    publishVelocity(0.0, velocity);
 } 
