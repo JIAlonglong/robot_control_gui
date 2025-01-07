@@ -51,4 +51,8 @@
   <!-- Testing -->
   <test_depend>rostest</test_depend>
   <test_depend>gtest</test_depend>
+
+  <!-- Added rospy dependency -->
+  <build_depend>rospy</build_depend>
+  <exec_depend>rospy</exec_depend>
 </package>

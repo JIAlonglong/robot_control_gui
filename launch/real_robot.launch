@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- TurtleBot3 -->
+    <include file="$(find turtlebot3_bringup)/launch/turtlebot3_robot.launch"/>
+
+    <!-- USB Camera -->
+    <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <param name="video_device" value="/dev/video0"/>
+        <param name="image_width" value="640"/>
+        <param name="image_height" value="480"/>
+        <param name="pixel_format" value="yuyv"/>
+        <param name="camera_frame_id" value="usb_cam"/>
+        <param name="io_method" value="mmap"/>
+    </node>
+
+    <!-- Robot Control GUI -->
+    <node name="robot_control_gui" pkg="robot_control_gui" type="robot_control_gui" output="screen">
+        <param name="cmd_vel_topic" value="/cmd_vel"/>
+        <param name="odom_topic" value="/odom"/>
+        <param name="scan_topic" value="/scan"/>
+        <param name="map_topic" value="/map"/>
+        <param name="initial_pose_topic" value="/initialpose"/>
+        <param name="camera_topic" value="/usb_cam/image_raw"/>
+    </node>
+</launch> 

@@ -20,6 +20,18 @@
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
+// 导航状态枚举
+enum class NavigationState {
+    IDLE,           // 空闲
+    PLANNING,       // 规划中
+    MOVING,         // 移动中
+    ROTATING,       // 旋转中
+    ADJUSTING,      // 微调中
+    SUCCEEDED,      // 成功到达
+    FAILED,         // 导航失败
+    CANCELED        // 已取消
+};
+
 class RobotController : public QObject {
     Q_OBJECT
 
@@ -33,6 +45,9 @@ public:
     bool isNavigating() const;
     bool setNavigationMode(int mode);
     int getNavigationMode() const;
+    NavigationState getNavigationState() const { return nav_state_; }
+    double getNavigationProgress() const { return nav_progress_; }
+    QString getNavigationStatusText() const { return nav_status_text_; }
 
     // 建图控制
     bool startMapping();
@@ -55,14 +70,16 @@ public:
     double getCurrentLinearVelocity() const { return current_linear_velocity_; }
     double getCurrentAngularVelocity() const { return current_angular_velocity_; }
 
-    // 导航控制
-    void startNavigation();
-    void stopNavigation();
-
     // 状态查询
     double getBatteryLevel() const { return battery_level_; }
     int getWifiStrength() const { return wifi_strength_; }
     QString getStatus() const { return status_; }
+
+    // 参数设置
+    bool setParam(const QString& name, const QString& value);
+    bool setParam(const QString& name, double value);
+    bool setParam(const QString& name, bool value);
+    bool setParam(const QString& name, int value);
 
 signals:
     // 数据更新信号
@@ -70,6 +87,11 @@ signals:
     void odomUpdated(const std::shared_ptr<nav_msgs::Odometry>& odom);
     void scanUpdated(const std::shared_ptr<sensor_msgs::LaserScan>& scan);
     void statusChanged(const QString& status);
+    
+    // 导航状态信号
+    void navigationStateChanged(NavigationState state);
+    void navigationProgressChanged(double progress);
+    void navigationFeedback(const QString& status);
 
 private:
     // ROS节点句柄
@@ -96,6 +118,13 @@ private:
     double current_linear_velocity_ = 0.0;
     double current_angular_velocity_ = 0.0;
 
+    // 导航状态
+    NavigationState nav_state_ = NavigationState::IDLE;
+    double nav_progress_ = 0.0;
+    QString nav_status_text_ = "就绪";
+    geometry_msgs::PoseStamped current_goal_;
+    double goal_distance_ = 0.0;
+
     // 状态信息
     double battery_level_ = 100.0;  // 电池电量（百分比）
     int wifi_strength_ = 100;      // WiFi信号强度（百分比）
@@ -111,6 +140,12 @@ private:
                      const move_base_msgs::MoveBaseResultConstPtr& result);
     void activeCallback();
     void feedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback);
+
+    // 辅助函数
+    void updateNavigationProgress(const geometry_msgs::PoseStamped& current_pose);
+    double calculateDistance(const geometry_msgs::PoseStamped& pose1,
+                           const geometry_msgs::PoseStamped& pose2);
+    void updateNavigationState(NavigationState state, const QString& status = QString());
 };
 
 #endif // ROBOT_CONTROLLER_H 
