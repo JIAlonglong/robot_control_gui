@@ -13,10 +13,16 @@
 #include <QGroupBox>
 #include <QRadioButton>
 #include <QPushButton>
+#include <QStackedWidget>
+#include <QToolBar>
+#include <QAction>
+#include <QStatusBar>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , central_widget_(nullptr)
+    , stacked_widget_(nullptr)
+    , tool_bar_(nullptr)
     , rviz_view_(nullptr)
     , status_panel_(nullptr)
     , speed_dashboard_(nullptr)
@@ -24,6 +30,11 @@ MainWindow::MainWindow(QWidget* parent)
     , linear_joystick_(nullptr)
     , angular_joystick_(nullptr)
     , display_options_dock_(nullptr)
+    , camera_view_(nullptr)
+    , control_page_(nullptr)
+    , navigation_page_(nullptr)
+    , sensor_page_(nullptr)
+    , mapping_page_(nullptr)
     , update_timer_(new QTimer(this))
     , keyboard_timer_(new QTimer(this))
     , robot_controller_(std::make_shared<RobotController>())
@@ -71,109 +82,188 @@ void MainWindow::setupUi()
     setCentralWidget(central_widget_);
 
     // 创建主布局
-    QHBoxLayout* main_layout = new QHBoxLayout(central_widget_);
+    QVBoxLayout* main_layout = new QVBoxLayout(central_widget_);
+    main_layout->setContentsMargins(0, 0, 0, 0);  // 移除边距
     
-    // 创建RViz视图
-    rviz_view_ = new RVizView(this);
-    rviz_view_->setMinimumSize(800, 600);
+    // 创建工具栏
+    createToolBar();
     
-    // 创建控制面板
-    QWidget* control_panel = new QWidget(this);
-    QVBoxLayout* control_layout = new QVBoxLayout(control_panel);
-    control_panel->setMaximumWidth(350);
+    // 创建堆叠式窗口部件
+    stacked_widget_ = new QStackedWidget(this);
+    main_layout->addWidget(stacked_widget_);
     
-    // 创建状态面板
-    status_panel_ = new RobotStatusPanel(control_panel);
-    control_layout->addWidget(status_panel_);
+    // 创建各个页面
+    createPages();
+    
+    // 创建浮动控制面板
+    createFloatingControlPanel();
+    
+    // 创建状态栏
+    statusBar()->showMessage(tr("就绪"));
+}
 
-    // 创建速度仪表盘
-    speed_dashboard_ = new SpeedDashboard(control_panel);
-    control_layout->addWidget(speed_dashboard_);
+void MainWindow::createToolBar()
+{
+    tool_bar_ = addToolBar(tr("工具栏"));
+    tool_bar_->setMovable(false);
+    tool_bar_->setIconSize(QSize(32, 32));
+
+    // 添加工具栏按钮
+    QAction* control_action = tool_bar_->addAction(tr("控制"));
+    QAction* navigation_action = tool_bar_->addAction(tr("导航"));
+
+    // 连接信号
+    connect(control_action, &QAction::triggered, [this]() { switchToPage(0); });
+    connect(navigation_action, &QAction::triggered, [this]() { switchToPage(1); });
+}
+
+void MainWindow::createPages()
+{
+    // 创建主页面
+    QWidget* main_page = new QWidget;
+    QHBoxLayout* main_layout = new QHBoxLayout(main_page);
+    main_layout->setContentsMargins(0, 0, 0, 0);
     
-    // 创建摇杆控制组
-    QGroupBox* joystick_group = new QGroupBox(tr("摇杆控制"), control_panel);
+    // 左侧状态面板
+    QWidget* status_widget = new QWidget;
+    QVBoxLayout* status_layout = new QVBoxLayout(status_widget);
+    status_layout->setContentsMargins(5, 5, 5, 5);
+    
+    status_panel_ = new RobotStatusPanel(status_widget);
+    status_layout->addWidget(status_panel_);
+    status_layout->addStretch();
+    
+    status_widget->setMaximumWidth(250);
+    main_layout->addWidget(status_widget);
+    
+    // 中央显示区域
+    QWidget* center_widget = new QWidget;
+    QVBoxLayout* center_layout = new QVBoxLayout(center_widget);
+    center_layout->setContentsMargins(0, 0, 0, 0);
+    
+    // 摄像头视图（调整大小）
+    camera_view_ = new CameraView(center_widget);
+    camera_view_->setMinimumHeight(300);
+    camera_view_->setMaximumHeight(400);
+    center_layout->addWidget(camera_view_);
+    
+    main_layout->addWidget(center_widget);
+    
+    // 创建导航页面
+    QWidget* nav_page = new QWidget;
+    QHBoxLayout* nav_layout = new QHBoxLayout(nav_page);
+    nav_layout->setContentsMargins(0, 0, 0, 0);
+    
+    // 左侧地图显示
+    rviz_view_ = new RVizView(nav_page);
+    
+    // 右侧导航控制面板
+    QWidget* nav_control_panel = new QWidget;
+    QVBoxLayout* nav_control_layout = new QVBoxLayout(nav_control_panel);
+    nav_control_layout->setContentsMargins(5, 5, 5, 5);
+    
+    navigation_panel_ = new NavigationPanel(robot_controller_, nav_control_panel);
+    nav_control_layout->addWidget(navigation_panel_);
+    
+    // 添加建图控制
+    QGroupBox* mapping_group = new QGroupBox(tr("建图控制"));
+    QVBoxLayout* mapping_layout = new QVBoxLayout(mapping_group);
+    
+    QPushButton* start_mapping_btn = new QPushButton(tr("开始建图"));
+    QPushButton* stop_mapping_btn = new QPushButton(tr("停止建图"));
+    QPushButton* save_map_btn = new QPushButton(tr("保存地图"));
+    
+    mapping_layout->addWidget(start_mapping_btn);
+    mapping_layout->addWidget(stop_mapping_btn);
+    mapping_layout->addWidget(save_map_btn);
+    
+    nav_control_layout->addWidget(mapping_group);
+    nav_control_layout->addStretch();
+    
+    nav_control_panel->setMaximumWidth(300);
+    
+    // 添加到导航页面布局
+    nav_layout->addWidget(rviz_view_);
+    nav_layout->addWidget(nav_control_panel);
+    
+    // 添加页面到堆叠式窗口部件
+    stacked_widget_->addWidget(main_page);
+    stacked_widget_->addWidget(nav_page);
+    
+    // 默认显示主页面
+    stacked_widget_->setCurrentIndex(0);
+}
+
+void MainWindow::createFloatingControlPanel()
+{
+    // 创建浮动控制面板
+    QDockWidget* control_dock = new QDockWidget(tr("控制面板"), this);
+    control_dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    control_dock->setFeatures(QDockWidget::DockWidgetFloatable | 
+                             QDockWidget::DockWidgetMovable);
+    
+    QWidget* control_widget = new QWidget(control_dock);
+    QVBoxLayout* control_layout = new QVBoxLayout(control_widget);
+    control_layout->setContentsMargins(5, 5, 5, 5);
+    
+    // 添加速度仪表盘（紧凑版）
+    QHBoxLayout* dashboard_layout = new QHBoxLayout;
+    speed_dashboard_ = new SpeedDashboard(control_widget);
+    speed_dashboard_->setMaximumHeight(100);  // 限制仪表盘高度
+    dashboard_layout->addWidget(speed_dashboard_);
+    control_layout->addLayout(dashboard_layout);
+    
+    // 添加摇杆控制
+    QGroupBox* joystick_group = new QGroupBox(tr("摇杆控制"));
     QVBoxLayout* joystick_layout = new QVBoxLayout(joystick_group);
+    joystick_layout->setSpacing(5);
     
-    // 添加提示标签
-    QLabel* joystick_hint = new QLabel(tr("左摇杆: 线速度控制 (上下移动)\n右摇杆: 角速度控制 (左右移动)"));
-    joystick_hint->setStyleSheet("color: #666666; font-size: 12px;");
-    joystick_hint->setAlignment(Qt::AlignCenter);
-    joystick_layout->addWidget(joystick_hint);
-    
-    // 创建摇杆容器
     QWidget* joysticks_container = new QWidget;
     QHBoxLayout* joysticks_layout = new QHBoxLayout(joysticks_container);
-    joysticks_layout->setSpacing(20);
+    joysticks_layout->setSpacing(10);
     
-    // 创建左摇杆（线速度控制）
-    QWidget* left_joystick_widget = new QWidget;
-    QVBoxLayout* left_layout = new QVBoxLayout(left_joystick_widget);
-    left_layout->setContentsMargins(0, 0, 0, 0);
+    linear_joystick_ = new JoystickWidget;
+    angular_joystick_ = new JoystickWidget;
+    linear_joystick_->setFixedSize(100, 100);
+    angular_joystick_->setFixedSize(100, 100);
     
-    QLabel* linear_label = new QLabel(tr("线速度控制"));
-    linear_label->setAlignment(Qt::AlignCenter);
-    linear_label->setStyleSheet("font-weight: bold;");
-    
-    linear_joystick_ = new JoystickWidget(joystick_group);
-    linear_joystick_->setFixedSize(120, 120);
-    
-    left_layout->addWidget(linear_label);
-    left_layout->addWidget(linear_joystick_);
-    
-    // 创建右摇杆（角速度控制）
-    QWidget* right_joystick_widget = new QWidget;
-    QVBoxLayout* right_layout = new QVBoxLayout(right_joystick_widget);
-    right_layout->setContentsMargins(0, 0, 0, 0);
-    
-    QLabel* angular_label = new QLabel(tr("角速度控制"));
-    angular_label->setAlignment(Qt::AlignCenter);
-    angular_label->setStyleSheet("font-weight: bold;");
-    
-    angular_joystick_ = new JoystickWidget(joystick_group);
-    angular_joystick_->setFixedSize(120, 120);
-    
-    right_layout->addWidget(angular_label);
-    right_layout->addWidget(angular_joystick_);
-    
-    // 将摇杆添加到容器
-    joysticks_layout->addStretch();
-    joysticks_layout->addWidget(left_joystick_widget);
-    joysticks_layout->addWidget(right_joystick_widget);
-    joysticks_layout->addStretch();
+    joysticks_layout->addWidget(linear_joystick_);
+    joysticks_layout->addWidget(angular_joystick_);
     
     joystick_layout->addWidget(joysticks_container);
+    control_layout->addWidget(joystick_group);
     
     // 添加键盘控制提示
-    QGroupBox* keyboard_group = new QGroupBox(tr("键盘控制"), control_panel);
+    QGroupBox* keyboard_group = new QGroupBox(tr("键盘控制"));
     QVBoxLayout* keyboard_layout = new QVBoxLayout(keyboard_group);
     QLabel* keyboard_hint = new QLabel(tr(
-        "↑: 前进\n"
-        "↓: 后退\n"
-        "←: 左转\n"
-        "→: 右转\n"
+        "↑: 前进  ↓: 后退\n"
+        "←: 左转  →: 右转\n"
         "空格: 紧急停止"
     ));
     keyboard_hint->setAlignment(Qt::AlignCenter);
     keyboard_layout->addWidget(keyboard_hint);
-    
-    // 创建导航面板
-    navigation_panel_ = new NavigationPanel(robot_controller_, control_panel);
-    
-    // 添加到控制面板
-    control_layout->addWidget(joystick_group);
     control_layout->addWidget(keyboard_group);
-    control_layout->addWidget(navigation_panel_);
-    control_layout->addStretch();
     
-    // 添加到主布局
-    main_layout->addWidget(rviz_view_, 1);
-    main_layout->addWidget(control_panel);
+    control_dock->setWidget(control_widget);
+    addDockWidget(Qt::RightDockWidgetArea, control_dock);
+    control_dock->setMinimumWidth(250);
+    control_dock->setMaximumWidth(300);
+}
+
+void MainWindow::switchToPage(int index)
+{
+    stacked_widget_->setCurrentIndex(index);
     
-    // 创建显示选项面板
-    createDisplayOptionsPanel();
-    
-    // 设置状态栏
-    statusBar()->showMessage(tr("就绪"));
+    // 根据页面更新状态
+    switch (index) {
+        case 0:
+            statusBar()->showMessage(tr("控制模式"));
+            break;
+        case 1:
+            statusBar()->showMessage(tr("导航模式"));
+            break;
+    }
 }
 
 void MainWindow::setupConnections()
@@ -218,6 +308,8 @@ void MainWindow::setupConnections()
             this, &MainWindow::handleOdomUpdate);
     connect(robot_controller_.get(), &RobotController::scanUpdated,
             this, &MainWindow::handleScanUpdate);
+    connect(robot_controller_.get(), &RobotController::statusChanged,
+            this, &MainWindow::onRobotStatusChanged);
 
     // 连接导航面板的信号
     connect(navigation_panel_, &NavigationPanel::navigationGoalSet,
@@ -512,5 +604,18 @@ void MainWindow::updateRobotState()
     if (scan) {
         auto std_scan = std::make_shared<sensor_msgs::LaserScan>(*scan);
         handleScanUpdate(std_scan);
+    }
+}
+
+void MainWindow::onRobotStatusChanged(const QString& status)
+{
+    // 在状态栏显示状态信息
+    statusBar()->showMessage(status);
+    
+    // 如果是导航服务器未连接的消息，禁用相关功能
+    if (status.contains("导航服务器未连接")) {
+        if (navigation_panel_) {
+            navigation_panel_->setEnabled(false);
+        }
     }
 } 

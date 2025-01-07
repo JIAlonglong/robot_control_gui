@@ -12,6 +12,8 @@
 #include <QGroupBox>
 #include <QRadioButton>
 #include <QPushButton>
+#include <QStackedWidget>
+#include <QToolBar>
 #include <memory>
 #include <map>
 #include <ros/ros.h>
@@ -22,6 +24,7 @@
 #include "ui/robot_status_panel.h"
 #include "ui/speed_dashboard.h"
 #include "ui/navigation_panel.h"
+#include "ui/sensor_display/camera_view.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -43,12 +46,17 @@ private slots:
     void handleOdomUpdate(const std::shared_ptr<nav_msgs::Odometry>& odom);
     void handleScanUpdate(const std::shared_ptr<sensor_msgs::LaserScan>& scan);
     void onJoystickMoved(double x, double y);
+    void onRobotStatusChanged(const QString& status);
+    void switchToPage(int index);
 
 private:
     void setupUi();
     void setupConnections();
     void setupRosConnections();
     void createDisplayOptionsPanel();
+    void createToolBar();
+    void createPages();
+    void createFloatingControlPanel();
 
     // ROS 相关
     ros::NodeHandle nh_;
@@ -66,6 +74,8 @@ private:
 
     // UI 组件
     QWidget* central_widget_;
+    QStackedWidget* stacked_widget_;
+    QToolBar* tool_bar_;
     RVizView* rviz_view_;
     RobotStatusPanel* status_panel_;
     SpeedDashboard* speed_dashboard_;
@@ -73,6 +83,13 @@ private:
     JoystickWidget* linear_joystick_;
     JoystickWidget* angular_joystick_;
     QDockWidget* display_options_dock_;
+    CameraView* camera_view_;
+
+    // 页面组件
+    QWidget* control_page_;
+    QWidget* navigation_page_;
+    QWidget* sensor_page_;
+    QWidget* mapping_page_;
 
     // 定时器
     QTimer* update_timer_;
