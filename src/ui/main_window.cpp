@@ -28,10 +28,12 @@ MainWindow::MainWindow(QWidget* parent)
     , keyboard_timer_(new QTimer(this))
     , robot_controller_(std::make_shared<RobotController>())
 {
-    // 初始化ROS节点
-    int argc = 0;
-    char** argv = nullptr;
-    ros::init(argc, argv, "robot_control_gui", ros::init_options::NoSigintHandler);
+    // 初始化ROS节点（如果尚未初始化）
+    if (!ros::isInitialized()) {
+        int argc = 0;
+        char** argv = nullptr;
+        ros::init(argc, argv, "robot_control_gui", ros::init_options::NoSigintHandler);
+    }
     
     // 设置UI
     setupUi();
@@ -49,6 +51,9 @@ MainWindow::MainWindow(QWidget* parent)
     // 设置状态更新定时器
     update_timer_->setInterval(50);  // 20Hz
     update_timer_->start();
+
+    // 设置焦点策略，使窗口可以接收键盘事件
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 MainWindow::~MainWindow()
@@ -174,12 +179,16 @@ void MainWindow::setupUi()
 void MainWindow::setupConnections()
 {
     // 连接定时器
-    update_timer_ = new QTimer(this);
-    connect(update_timer_, &QTimer::timeout, this, &MainWindow::updateRobotState);
+    connect(update_timer_, &QTimer::timeout, this, [this]() {
+        // 处理ROS消息
+        if (ros::ok()) {
+            ros::spinOnce();
+            updateRobotState();
+        }
+    });
     update_timer_->start(50);  // 20Hz更新频率
 
     // 连接键盘定时器
-    keyboard_timer_ = new QTimer(this);
     connect(keyboard_timer_, &QTimer::timeout, this, &MainWindow::updateKeyboardControl);
     keyboard_timer_->start(100);  // 10Hz更新频率
 
@@ -277,54 +286,88 @@ void MainWindow::onJoystickMoved(double x, double y)
 
 void MainWindow::keyPressEvent(QKeyEvent* event)
 {
-    // 处理键盘按下事件
+    if (event->isAutoRepeat()) {
+        return;  // 忽略按键重复
+    }
+
     switch (event->key()) {
         case Qt::Key_Up:
-            linear_joystick_->setPosition(0.0, -1.0);  // 前进
+            current_linear_vel_ = max_linear_vel_;
             break;
         case Qt::Key_Down:
-            linear_joystick_->setPosition(0.0, 1.0);   // 后退
+            current_linear_vel_ = -max_linear_vel_;
             break;
         case Qt::Key_Left:
-            angular_joystick_->setPosition(-1.0, 0.0); // 左转
+            current_angular_vel_ = max_angular_vel_;
             break;
         case Qt::Key_Right:
-            angular_joystick_->setPosition(1.0, 0.0);  // 右转
+            current_angular_vel_ = -max_angular_vel_;
             break;
         case Qt::Key_Space:
-            // 急停：将两个摇杆都归零
-            linear_joystick_->setPosition(0.0, 0.0);
-            angular_joystick_->setPosition(0.0, 0.0);
-            robot_controller_->publishVelocity(0.0, 0.0);
-            break;
-        default:
-            QMainWindow::keyPressEvent(event);
+            // 紧急停止
+            current_linear_vel_ = 0.0;
+            current_angular_vel_ = 0.0;
+            robot_controller_->setLinearVelocity(0.0);
+            robot_controller_->setAngularVelocity(0.0);
             break;
     }
+    // 更新按键状态
+    key_states_[event->key()] = true;
+    updateRobotVelocity();
 }
 
 void MainWindow::keyReleaseEvent(QKeyEvent* event)
 {
-    // 处理键盘释放事件
-    switch (event->key()) {
-        case Qt::Key_Up:
-        case Qt::Key_Down:
-            linear_joystick_->setPosition(0.0, 0.0);  // 停止线速度
-            break;
-        case Qt::Key_Left:
-        case Qt::Key_Right:
-            angular_joystick_->setPosition(0.0, 0.0); // 停止角速度
-            break;
-        default:
-            QMainWindow::keyReleaseEvent(event);
-            break;
+    if (event->isAutoRepeat()) {
+        return;  // 忽略按键重复
+    }
+
+    // 更新按键状态
+    key_states_[event->key()] = false;
+
+    // 检查其他方向键的状态
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) {
+        if (!key_states_[Qt::Key_Up] && !key_states_[Qt::Key_Down]) {
+            current_linear_vel_ = 0.0;
+        }
+    }
+    if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+        if (!key_states_[Qt::Key_Left] && !key_states_[Qt::Key_Right]) {
+            current_angular_vel_ = 0.0;
+        }
+    }
+    updateRobotVelocity();
+}
+
+void MainWindow::updateRobotVelocity()
+{
+    // 发送速度命令到机器人
+    robot_controller_->setLinearVelocity(current_linear_vel_);
+    robot_controller_->setAngularVelocity(current_angular_vel_);
+    
+    // 更新速度仪表盘显示
+    if (speed_dashboard_) {
+        speed_dashboard_->setLinearSpeed(current_linear_vel_);
+        speed_dashboard_->setAngularSpeed(current_angular_vel_);
     }
 }
 
 void MainWindow::updateKeyboardControl()
 {
-    // 键盘控制已经通过摇杆位置的改变来实现
-    // 这个函数可以用来处理一些持续性的键盘控制逻辑
+    // 定期更新速度命令，确保持续运动
+    if (key_states_[Qt::Key_Up]) {
+        current_linear_vel_ = max_linear_vel_;
+    } else if (key_states_[Qt::Key_Down]) {
+        current_linear_vel_ = -max_linear_vel_;
+    }
+
+    if (key_states_[Qt::Key_Left]) {
+        current_angular_vel_ = max_angular_vel_;
+    } else if (key_states_[Qt::Key_Right]) {
+        current_angular_vel_ = -max_angular_vel_;
+    }
+
+    updateRobotVelocity();
 }
 
 void MainWindow::setupRosConnections()

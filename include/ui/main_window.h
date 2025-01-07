@@ -13,6 +13,7 @@
 #include <QRadioButton>
 #include <QPushButton>
 #include <memory>
+#include <map>
 #include <ros/ros.h>
 #include <nav_msgs/Path.h>
 #include "ros/robot_controller.h"
@@ -79,6 +80,17 @@ private:
 
     // 控制器
     std::shared_ptr<RobotController> robot_controller_;
+
+    // 键盘控制相关
+    double current_linear_vel_ = 0.0;
+    double current_angular_vel_ = 0.0;
+    const double max_linear_vel_ = 0.5;  // 最大线速度 (m/s)
+    const double max_angular_vel_ = 1.0;  // 最大角速度 (rad/s)
+
+    // 按键状态存储
+    std::map<int, bool> key_states_;
+
+    void updateRobotVelocity();
 };
 
 #endif // MAIN_WINDOW_H 

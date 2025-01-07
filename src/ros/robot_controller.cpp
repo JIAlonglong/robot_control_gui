@@ -302,7 +302,17 @@ bool RobotController::updateCostmap()
 
 void RobotController::publishVelocity(double linear, double angular)
 {
-    // 限制速度在最大值范围内
+    // 安全检查：如果ROS连接断开，停止机器人
+    if (!ros::ok()) {
+        ROS_WARN("ROS connection lost, stopping robot");
+        geometry_msgs::Twist cmd_vel;
+        cmd_vel.linear.x = 0.0;
+        cmd_vel.angular.z = 0.0;
+        cmd_vel_pub_.publish(cmd_vel);
+        return;
+    }
+
+    // 安全检查：确保速度在合理范围内
     linear = std::max(-max_linear_velocity_, std::min(linear, max_linear_velocity_));
     angular = std::max(-max_angular_velocity_, std::min(angular, max_angular_velocity_));
 
@@ -310,6 +320,10 @@ void RobotController::publishVelocity(double linear, double angular)
     cmd_vel.linear.x = linear;
     cmd_vel.angular.z = angular;
     cmd_vel_pub_.publish(cmd_vel);
+
+    // 记录当前速度状态
+    current_linear_velocity_ = linear;
+    current_angular_velocity_ = angular;
 }
 
 void RobotController::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg)
@@ -332,14 +346,16 @@ void RobotController::scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg)
 
 void RobotController::setLinearVelocity(double velocity)
 {
-    // 限制线速度在最大值范围内
-    velocity = std::max(-max_linear_velocity_, std::min(velocity, max_linear_velocity_));
-    publishVelocity(velocity, 0.0);
+    // 限制速度在最大值范围内
+    current_linear_velocity_ = std::max(-max_linear_velocity_, 
+                                      std::min(velocity, max_linear_velocity_));
+    publishVelocity(current_linear_velocity_, current_angular_velocity_);
 }
 
 void RobotController::setAngularVelocity(double velocity)
 {
-    // 限制角速度在最大值范围内
-    velocity = std::max(-max_angular_velocity_, std::min(velocity, max_angular_velocity_));
-    publishVelocity(0.0, velocity);
+    // 限制速度在最大值范围内
+    current_angular_velocity_ = std::max(-max_angular_velocity_,
+                                       std::min(velocity, max_angular_velocity_));
+    publishVelocity(current_linear_velocity_, current_angular_velocity_);
 } 
