@@ -9,8 +9,7 @@ protected:
         int argc = 0;
         char** argv = nullptr;
         app = new QApplication(argc, argv);
-        ros::NodeHandle nh;
-        window = new MainWindow(nh);
+        window = new MainWindow();
     }
 
     void TearDown() override {

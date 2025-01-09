@@ -33,14 +33,15 @@ TEST_F(TestRobotStatus, TestInitialization) {
 
 TEST_F(TestRobotStatus, TestBatteryLevel) {
     // 测试电池电量显示
-    panel->setBatteryLevel(75.5);
+    panel->updateBatteryLevel(75.5);
     EXPECT_DOUBLE_EQ(75.5, panel->getBatteryLevel());
 
-    // 测试边界值
-    panel->setBatteryLevel(100.0);
+    // 测试最大值
+    panel->updateBatteryLevel(100.0);
     EXPECT_DOUBLE_EQ(100.0, panel->getBatteryLevel());
-    
-    panel->setBatteryLevel(0.0);
+
+    // 测试最小值
+    panel->updateBatteryLevel(0.0);
     EXPECT_DOUBLE_EQ(0.0, panel->getBatteryLevel());
 }
 

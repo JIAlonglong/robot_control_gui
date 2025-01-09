@@ -227,15 +227,15 @@ void NavigationPanel::updateButtonStates()
     // 根据导航状态更新进度条样式
     QString progress_style;
     switch (current_state_) {
-        case NavigationState::SUCCEEDED:
+        case RobotController::NavigationState::SUCCEEDED:
             progress_style = "QProgressBar { text-align: center; } "
                            "QProgressBar::chunk { background-color: #2ecc71; }";
             break;
-        case NavigationState::FAILED:
+        case RobotController::NavigationState::FAILED:
             progress_style = "QProgressBar { text-align: center; } "
                            "QProgressBar::chunk { background-color: #e74c3c; }";
             break;
-        case NavigationState::CANCELED:
+        case RobotController::NavigationState::CANCELED:
             progress_style = "QProgressBar { text-align: center; } "
                            "QProgressBar::chunk { background-color: #f1c40f; }";
             break;
@@ -247,13 +247,13 @@ void NavigationPanel::updateButtonStates()
     progress_bar_->setStyleSheet(progress_style);
 }
 
-void NavigationPanel::updateNavigationState(NavigationState state)
+void NavigationPanel::updateNavigationState(RobotController::NavigationState state)
 {
     current_state_ = state;
-    is_navigating_ = (state != NavigationState::IDLE && 
-                     state != NavigationState::SUCCEEDED &&
-                     state != NavigationState::FAILED &&
-                     state != NavigationState::CANCELED);
+    is_navigating_ = (state != RobotController::NavigationState::IDLE && 
+                     state != RobotController::NavigationState::SUCCEEDED &&
+                     state != RobotController::NavigationState::FAILED &&
+                     state != RobotController::NavigationState::CANCELED);
     
     // 更新按钮状态
     updateButtonStates();
@@ -261,13 +261,13 @@ void NavigationPanel::updateNavigationState(NavigationState state)
     // 更新状态显示样式
     QString style;
     switch (state) {
-        case NavigationState::SUCCEEDED:
+        case RobotController::NavigationState::SUCCEEDED:
             style = "QLabel { color: green; font-weight: bold; }";
             break;
-        case NavigationState::FAILED:
+        case RobotController::NavigationState::FAILED:
             style = "QLabel { color: red; font-weight: bold; }";
             break;
-        case NavigationState::CANCELED:
+        case RobotController::NavigationState::CANCELED:
             style = "QLabel { color: orange; font-weight: bold; }";
             break;
         default:

@@ -11,6 +11,9 @@ class JoystickWidget : public QWidget {
 public:
     explicit JoystickWidget(QWidget* parent = nullptr);
     void setPosition(double x, double y);
+    double getX() const;
+    double getY() const;
+    bool isPressed() const;
 
 signals:
     void positionChanged(double x, double y);

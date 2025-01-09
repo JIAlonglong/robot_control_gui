@@ -20,7 +20,7 @@ protected:
         nh_ = std::make_shared<ros::NodeHandle>();
         
         // 创建机器人控制器
-        robot_controller_ = std::make_shared<RobotController>(*nh_);
+        robot_controller_ = std::make_shared<RobotController>();
         
         // 创建主窗口
         main_window_ = new MainWindow();
@@ -69,10 +69,10 @@ TEST_F(GUITest, TestKeyboardControl) {
     // 模拟按键事件
     QTest::keyPress(main_window_, Qt::Key_W);
     QTest::qWait(100);
-    EXPECT_NE(robot_controller_->getCurrentLinearSpeed(), 0.0);
+    EXPECT_NE(robot_controller_->getCurrentLinearVelocity(), 0.0);
     QTest::keyRelease(main_window_, Qt::Key_W);
     QTest::qWait(100);
-    EXPECT_EQ(robot_controller_->getCurrentLinearSpeed(), 0.0);
+    EXPECT_EQ(robot_controller_->getCurrentLinearVelocity(), 0.0);
 }
 
 // 测试虚拟摇杆
@@ -84,10 +84,10 @@ TEST_F(GUITest, TestJoystick) {
     QTest::mousePress(joystick, Qt::LeftButton, Qt::NoModifier, QPoint(75, 75));
     QTest::mouseMove(joystick, QPoint(75, 25));  // 向前移动
     QTest::qWait(100);
-    EXPECT_GT(robot_controller_->getCurrentLinearSpeed(), 0.0);
+    EXPECT_GT(robot_controller_->getCurrentLinearVelocity(), 0.0);
     QTest::mouseRelease(joystick, Qt::LeftButton, Qt::NoModifier, QPoint(75, 25));
     QTest::qWait(100);
-    EXPECT_EQ(robot_controller_->getCurrentLinearSpeed(), 0.0);
+    EXPECT_EQ(robot_controller_->getCurrentLinearVelocity(), 0.0);
 }
 
 // 测试状态显示

@@ -206,4 +206,16 @@ void JoystickWidget::setPosition(double x, double y)
     // 更新界面并发送信号
     update();
     emitPosition();
+}
+
+double JoystickWidget::getX() const {
+    return (stick_pos_.x() - center_pos_.x()) / static_cast<double>(radius_);
+}
+
+double JoystickWidget::getY() const {
+    return -(stick_pos_.y() - center_pos_.y()) / static_cast<double>(radius_);
+}
+
+bool JoystickWidget::isPressed() const {
+    return is_pressed_;
 } 

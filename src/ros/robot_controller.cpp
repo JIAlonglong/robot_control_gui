@@ -24,6 +24,8 @@ RobotController::RobotController(QObject* parent)
     , navigation_mode_(0)
     , max_linear_velocity_(0.22)  // TurtleBot3 Burger的最大线速度
     , max_angular_velocity_(2.84) // TurtleBot3 Burger的最大角速度
+    , current_linear_velocity_(0.0)
+    , current_angular_velocity_(0.0)
 {
     // 从参数服务器读取配置
     ros::NodeHandle private_nh("~");
@@ -235,25 +237,6 @@ void RobotController::updateNavigationState(NavigationState state, const QString
     emit statusChanged(nav_status_text_);
 }
 
-bool RobotController::isNavigating() const
-{
-    return is_navigating_;
-}
-
-bool RobotController::setNavigationMode(int mode)
-{
-    if (mode >= 0 && mode <= 2) {  // 支持3种模式：0-默认，1-快速，2-精确
-        navigation_mode_ = mode;
-        return true;
-    }
-    return false;
-}
-
-int RobotController::getNavigationMode() const
-{
-    return navigation_mode_;
-}
-
 bool RobotController::startMapping()
 {
     if (!is_mapping_) {
@@ -444,6 +427,57 @@ void RobotController::setAngularVelocity(double velocity)
     publishVelocity(current_linear_velocity_, current_angular_velocity_);
 }
 
+void RobotController::setYawTolerance(double tolerance)
+{
+    nh_.setParam("/move_base/DWAPlannerROS/yaw_goal_tolerance", tolerance);
+}
+
+void RobotController::setInflationRadius(double radius)
+{
+    nh_.setParam("/move_base/global_costmap/inflation_layer/inflation_radius", radius);
+    nh_.setParam("/move_base/local_costmap/inflation_layer/inflation_radius", radius);
+}
+
+void RobotController::setTransformTolerance(double tolerance)
+{
+    nh_.setParam("/move_base/transform_tolerance", tolerance);
+}
+
+void RobotController::setPlannerFrequency(double frequency)
+{
+    nh_.setParam("/move_base/planner_frequency", frequency);
+}
+
+void RobotController::setControllerFrequency(double frequency)
+{
+    nh_.setParam("/move_base/controller_frequency", frequency);
+}
+
+void RobotController::setGlobalCostmapUpdateFrequency(double frequency)
+{
+    nh_.setParam("/move_base/global_costmap/update_frequency", frequency);
+}
+
+void RobotController::setLocalCostmapUpdateFrequency(double frequency)
+{
+    nh_.setParam("/move_base/local_costmap/update_frequency", frequency);
+}
+
+void RobotController::setPlannedPathBias(double bias)
+{
+    nh_.setParam("/move_base/DWAPlannerROS/path_distance_bias", bias);
+}
+
+void RobotController::setRecoveryBehaviorEnabled(bool enabled)
+{
+    nh_.setParam("/move_base/recovery_behavior_enabled", enabled);
+}
+
+void RobotController::setClearingRotationAllowed(bool allowed)
+{
+    nh_.setParam("/move_base/clearing_rotation_allowed", allowed);
+}
+
 bool RobotController::setParam(const QString& name, const QString& value)
 {
     try {
@@ -482,4 +516,12 @@ bool RobotController::setParam(const QString& name, int value)
     } catch (...) {
         return false;
     }
+}
+
+double RobotController::getCurrentLinearVelocity() const {
+    return current_linear_velocity_;
+}
+
+double RobotController::getCurrentAngularVelocity() const {
+    return current_angular_velocity_;
 } 

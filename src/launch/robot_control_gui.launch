@@ -13,7 +13,7 @@
     <!-- <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/> -->
 
     <!-- 启动我们的GUI程序 -->
-    <node name="robot_control_gui" pkg="robot_control_gui" type="robot_control_gui_app" output="screen">
+    <node name="robot_control_gui" pkg="robot_control_gui" type="robot_control_gui" output="screen">
         <param name="use_sim_time" value="false"/>
     </node>
 </launch> 

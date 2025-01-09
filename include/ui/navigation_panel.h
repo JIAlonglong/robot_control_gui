@@ -19,7 +19,7 @@ public:
                            QWidget* parent = nullptr);
 
 public slots:
-    void updateNavigationState(NavigationState state);
+    void updateNavigationState(RobotController::NavigationState state);
     void updateNavigationProgress(double progress);
     void updateNavigationStatus(const QString& status);
     void updatePoseEstimate(double x, double y, double theta);
@@ -70,7 +70,7 @@ private:
     bool is_mapping_;
     bool has_map_;
     bool is_navigating_;
-    NavigationState current_state_;
+    RobotController::NavigationState current_state_;
 
     // 路径规划相关控件
     QComboBox* planner_type_;
