@@ -46,6 +46,7 @@ private:
 
     QImage current_image_;
     bool is_running_;
+    QString current_topic_;
 };
 
 #endif // CAMERA_VIEW_H 

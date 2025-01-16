@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(robot_control_gui)
 
-# 使用C++14
+# 设置C++标准
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -19,17 +19,20 @@ set(CMAKE_AUTOUIC ON)
 # 查找所需的包
 find_package(catkin REQUIRED COMPONENTS
   roscpp
+  rospy
   std_msgs
+  sensor_msgs
   nav_msgs
   geometry_msgs
-  sensor_msgs
+  cv_bridge
+  image_transport
+  rviz
   tf2
   tf2_ros
-  rviz
-  cv_bridge
+  move_base_msgs
+  actionlib
 )
 
-# 查找Qt5
 find_package(Qt5 REQUIRED COMPONENTS
   Core
   Widgets
@@ -64,11 +67,11 @@ set(OGRE_LIBRARIES
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS roscpp std_msgs nav_msgs geometry_msgs sensor_msgs tf2 tf2_ros rviz
-  DEPENDS Qt5Core Qt5Widgets Qt5Gui Qt5OpenGL Qt5Network Qt5PrintSupport Qt5Multimedia Qt5MultimediaWidgets OpenCV
+  CATKIN_DEPENDS roscpp rospy std_msgs sensor_msgs nav_msgs geometry_msgs cv_bridge image_transport rviz tf2 tf2_ros move_base_msgs actionlib
+  DEPENDS Qt5Core Qt5Widgets Qt5Gui Qt5OpenGL Qt5Network Qt5PrintSupport Qt5Multimedia Qt5MultimediaWidgets Qt5SerialPort OpenCV
 )
 
-# 包含目录
+# 设置包含目录
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
@@ -151,11 +154,10 @@ install(DIRECTORY launch/
   FILES_MATCHING PATTERN "*.launch"
 )
 
-install(DIRECTORY config/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
-)
-
-install(DIRECTORY maps/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/maps
+# 安装资源文件
+install(DIRECTORY resources/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/resources
+  FILES_MATCHING PATTERN "*.png"
+  PATTERN "*.jpg"
 )
 

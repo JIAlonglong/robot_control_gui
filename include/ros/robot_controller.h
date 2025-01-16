@@ -18,6 +18,18 @@
 #include <actionlib/client/simple_action_client.h>
 #include <move_base_msgs/MoveBaseAction.h>
 
+// 导航状态枚举
+enum class NavigationState {
+    IDLE,           // 空闲
+    PLANNING,       // 规划中
+    MOVING,         // 移动中
+    ROTATING,       // 旋转中
+    ADJUSTING,      // 微调中
+    SUCCEEDED,      // 成功到达
+    FAILED,         // 导航失败
+    CANCELED        // 已取消
+};
+
 class RobotController : public QObject {
     Q_OBJECT
 
@@ -47,6 +59,9 @@ public:
     geometry_msgs::Pose getCurrentAmclPose() const { return current_amcl_pose_; }
     sensor_msgs::LaserScan getCurrentScan() const { return current_scan_; }
     bool isInitialized() const { return is_initialized_; }
+    NavigationState getNavigationState() const { return nav_state_; }
+    double getNavigationProgress() const { return navigation_progress_; }
+    QString getNavigationStatusText() const { return nav_status_text_; }
 
     // 导航相关
     void setInitialPose(const geometry_msgs::PoseWithCovarianceStamped& pose);
@@ -119,11 +134,12 @@ Q_SIGNALS:
     void poseUpdated(const geometry_msgs::PoseWithCovariance& pose);
 
     // 导航相关信号
-    void navigationStateChanged(bool active);
+    void navigationStateChanged(NavigationState state);
     void navigationProgressChanged(double progress);
     void navigationModeChanged(int mode);
     void distanceToGoalChanged(double distance);
     void estimatedTimeToGoalChanged(double time);
+    void navigationFeedback(const QString& status);
 
     // 定位相关信号
     void localizationStateChanged(bool active);
@@ -147,6 +163,10 @@ private:
     void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
     void amclPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
     void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& map);
+    void doneCallback(const actionlib::SimpleClientGoalState& state,
+                     const move_base_msgs::MoveBaseResultConstPtr& result);
+    void activeCallback();
+    void feedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback);
 
     // ROS相关
     ros::NodeHandle nh_;
@@ -185,9 +205,12 @@ private:
 
     // 导航相关
     bool is_navigating_{false};
+    NavigationState nav_state_{NavigationState::IDLE};
     double navigation_progress_{0.0};
     double distance_to_goal_{0.0};
     double estimated_time_to_goal_{0.0};
+    QString nav_status_text_{"就绪"};
+    geometry_msgs::PoseStamped current_goal_;
 
     // 定位相关
     bool is_localizing_{false};
@@ -209,6 +232,12 @@ private:
     bool recovery_behavior_enabled_{true};
     bool clearing_rotation_allowed_{true};
     int navigation_mode_{0};
+
+    // 辅助函数
+    void updateNavigationProgress(const geometry_msgs::PoseStamped& current_pose);
+    double calculateDistance(const geometry_msgs::PoseStamped& pose1,
+                           const geometry_msgs::PoseStamped& pose2);
+    void updateNavigationState(NavigationState state, const QString& status = QString());
 };
 
 #endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H 
