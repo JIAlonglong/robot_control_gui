@@ -1,39 +1,39 @@
-#ifndef JOYSTICK_WIDGET_H
-#define JOYSTICK_WIDGET_H
+#ifndef ROBOT_CONTROL_GUI_JOYSTICK_WIDGET_H
+#define ROBOT_CONTROL_GUI_JOYSTICK_WIDGET_H
 
 #include <QWidget>
 #include <QPoint>
-#include <QTimer>
 
-class JoystickWidget : public QWidget {
+class JoystickWidget : public QWidget
+{
     Q_OBJECT
 
 public:
     explicit JoystickWidget(QWidget* parent = nullptr);
-    void setPosition(double x, double y);
-    double getX() const;
-    double getY() const;
-    bool isPressed() const;
+    ~JoystickWidget() override;
+
+    void reset();
 
 signals:
-    void positionChanged(double x, double y);
+    void linearJoystickMoved(double x, double y);
+    void angularJoystickMoved(double x, double y);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
-    void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
-    void leaveEvent(QEvent* event) override;
-    void enterEvent(QEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
-    bool is_pressed_;
-    int radius_;
-    QPoint center_pos_;
-    QPoint stick_pos_;
-    QTimer* update_timer_;
+    void updateJoystickPosition();
+    QPointF normalizePosition(const QPoint& pos) const;
 
-    void emitPosition();
+    bool is_pressed_{false};
+    QPoint stick_pos_;
+    QPoint center_;
+    int base_radius_{80};  // 底座圆的半径
+    int stick_radius_{20}; // 摇杆圆的半径
 };
 
-#endif // JOYSTICK_WIDGET_H 
+#endif // ROBOT_CONTROL_GUI_JOYSTICK_WIDGET_H 

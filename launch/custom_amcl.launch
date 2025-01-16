@@ -22,28 +22,28 @@
         <param name="gui_publish_rate" value="50.0"/>
         
         <!-- 滤波器参数 -->
-        <param name="min_particles" value="1000"/>
-        <param name="max_particles" value="10000"/>
-        <param name="kld_err" value="0.01"/>
-        <param name="kld_z" value="0.99"/>
-        <param name="resample_interval" value="2"/>
-        <param name="recovery_alpha_slow" value="0.001"/>
-        <param name="recovery_alpha_fast" value="0.1"/>
+        <param name="min_particles" value="2000"/>
+        <param name="max_particles" value="20000"/>
+        <param name="kld_err" value="0.005"/>
+        <param name="kld_z" value="0.995"/>
+        <param name="resample_interval" value="1"/>
+        <param name="recovery_alpha_slow" value="0.0005"/>
+        <param name="recovery_alpha_fast" value="0.05"/>
         
         <!-- 里程计模型参数 -->
         <param name="odom_model_type" value="diff"/>
-        <param name="odom_alpha1" value="0.1"/>
-        <param name="odom_alpha2" value="0.1"/>
-        <param name="odom_alpha3" value="0.1"/>
-        <param name="odom_alpha4" value="0.1"/>
+        <param name="odom_alpha1" value="0.05"/>
+        <param name="odom_alpha2" value="0.05"/>
+        <param name="odom_alpha3" value="0.05"/>
+        <param name="odom_alpha4" value="0.05"/>
         
         <!-- 激光模型参数 -->
         <param name="laser_model_type" value="likelihood_field"/>
-        <param name="laser_likelihood_max_dist" value="4.0"/>
-        <param name="laser_max_beams" value="100"/>
-        <param name="laser_z_hit" value="0.97"/>
-        <param name="laser_z_rand" value="0.03"/>
-        <param name="laser_sigma_hit" value="0.1"/>
+        <param name="laser_likelihood_max_dist" value="2.0"/>
+        <param name="laser_max_beams" value="180"/>
+        <param name="laser_z_hit" value="0.98"/>
+        <param name="laser_z_rand" value="0.02"/>
+        <param name="laser_sigma_hit" value="0.05"/>
         
         <!-- 全局定位参数 -->
         <param name="do_beamskip" value="true"/>

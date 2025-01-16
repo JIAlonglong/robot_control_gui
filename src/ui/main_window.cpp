@@ -4,618 +4,576 @@
  */
 
 #include "ui/main_window.h"
+#include "ui/rviz_view.h"
+#include "ui/navigation_panel.h"
+#include "ui/joystick_widget.h"
+#include "ui/speed_dashboard.h"
+#include "ros/robot_controller.h"
+
+#include <QMainWindow>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QKeyEvent>
-#include <QGraphicsDropShadowEffect>
-#include <QGraphicsEffect>
 #include <QLabel>
-#include <QGroupBox>
-#include <QRadioButton>
 #include <QPushButton>
-#include <QStackedWidget>
+#include <QGroupBox>
+#include <QMessageBox>
+#include <QKeyEvent>
 #include <QToolBar>
-#include <QAction>
+#include <QDockWidget>
 #include <QStatusBar>
+#include <QDebug>
+#include <QTimer>
+#include <QCheckBox>
+#include <QAction>
+#include <QSizePolicy>
+#include <QSplitter>
+#include <QMenuBar>
+#include <QToolButton>
+#include <QSpacerItem>
+#include <QIcon>
+
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
+#include <sensor_msgs/LaserScan.h>
+#include <std_msgs/String.h>
 
 MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent)
-    , central_widget_(nullptr)
-    , stacked_widget_(nullptr)
-    , tool_bar_(nullptr)
-    , rviz_view_(nullptr)
-    , status_panel_(nullptr)
-    , speed_dashboard_(nullptr)
-    , navigation_panel_(nullptr)
-    , linear_joystick_(nullptr)
-    , angular_joystick_(nullptr)
-    , display_options_dock_(nullptr)
-    , camera_view_(nullptr)
-    , control_page_(nullptr)
-    , navigation_page_(nullptr)
-    , sensor_page_(nullptr)
-    , mapping_page_(nullptr)
-    , update_timer_(new QTimer(this))
-    , keyboard_timer_(new QTimer(this))
-    , robot_controller_(std::make_shared<RobotController>())
+    : QMainWindow(parent), d_(std::make_unique<MainWindowPrivate>())
 {
-    // 初始化ROS节点（如果尚未初始化）
+    // 初始化ROS节点
     if (!ros::isInitialized()) {
-        int argc = 0;
-        char** argv = nullptr;
-        ros::init(argc, argv, "robot_control_gui", ros::init_options::NoSigintHandler);
+        throw std::runtime_error("ROS节点未初始化");
     }
-    
+
+    // 创建机器人控制器
+    d_->robot_controller_ = std::make_shared<RobotController>();
+    if (!d_->robot_controller_) {
+        throw std::runtime_error("无法创建机器人控制器");
+    }
+
+    // 设置窗口标题和大小
+    setWindowTitle(tr("TurtleBot3 控制面板"));
+    setMinimumSize(1200, 800);
+
     // 设置UI
     setupUi();
-    
-    // 设置ROS连接
+    setupSubscribers();
     setupRosConnections();
-    
-    // 设置信号连接
-    setupConnections();
-
-    // 设置键盘控制定时器
-    keyboard_timer_->setInterval(100);  // 10Hz
-    keyboard_timer_->start();
-
-    // 设置状态更新定时器
-    update_timer_->setInterval(50);  // 20Hz
-    update_timer_->start();
-
-    // 设置焦点策略，使窗口可以接收键盘事件
-    setFocusPolicy(Qt::StrongFocus);
 }
 
 MainWindow::~MainWindow()
 {
+    if (d_->robot_controller_) {
+        d_->robot_controller_->stop();
+    }
 }
 
 void MainWindow::setupUi()
 {
-    // 设置窗口标题和大小
-    setWindowTitle(tr("TurtleBot3 控制面板"));
-    resize(1200, 800);
-
+    // 设置窗口属性
+    setWindowTitle(tr("机器人控制界面"));
+    setMinimumSize(1024, 768);
+    
     // 创建中央部件
-    central_widget_ = new QWidget(this);
-    setCentralWidget(central_widget_);
-
+    d_->central_widget_ = new QWidget(this);
+    setCentralWidget(d_->central_widget_);
+    
     // 创建主布局
-    QVBoxLayout* main_layout = new QVBoxLayout(central_widget_);
-    main_layout->setContentsMargins(0, 0, 0, 0);  // 移除边距
+    auto* main_layout = new QHBoxLayout(d_->central_widget_);
+    main_layout->setContentsMargins(0, 0, 0, 0);
+    main_layout->setSpacing(0);
+
+    // 创建RViz视图
+    d_->rviz_view_ = std::make_shared<RVizView>(d_->central_widget_);
+    
+    // 创建堆叠部件
+    d_->stacked_widget_ = new QStackedWidget(d_->central_widget_);
+    
+    // 创建控制面板
+    d_->robot_controller_ = std::make_shared<RobotController>();
+    d_->control_panel_ = std::make_shared<ControlPanel>(d_->robot_controller_, d_->stacked_widget_);
+    d_->stacked_widget_->addWidget(d_->control_panel_.get());
+    
+    // 创建导航面板
+    d_->navigation_panel_ = std::make_shared<NavigationPanel>(d_->robot_controller_, d_->stacked_widget_);
+    d_->stacked_widget_->addWidget(d_->navigation_panel_.get());
+    
+    // 创建设置面板
+    d_->settings_panel_ = std::make_shared<SettingsPanel>(d_->robot_controller_, d_->stacked_widget_);
+    d_->stacked_widget_->addWidget(d_->settings_panel_.get());
+    
+    // 设置布局
+    main_layout->addWidget(d_->rviz_view_.get(), 2);  // RViz视图占2/3
+    main_layout->addWidget(d_->stacked_widget_, 1);   // 控制面板占1/3
     
     // 创建工具栏
     createToolBar();
     
-    // 创建堆叠式窗口部件
-    stacked_widget_ = new QStackedWidget(this);
-    main_layout->addWidget(stacked_widget_);
+    // 创建显示选项面板
+    createDisplayOptionsPanel();
     
-    // 创建各个页面
-    createPages();
-    
-    // 创建浮动控制面板
-    createFloatingControlPanel();
-    
-    // 创建状态栏
-    statusBar()->showMessage(tr("就绪"));
+    // 设置初始页面
+    d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
 }
 
 void MainWindow::createToolBar()
 {
-    tool_bar_ = addToolBar(tr("工具栏"));
-    tool_bar_->setMovable(false);
-    tool_bar_->setIconSize(QSize(32, 32));
+    d_->tool_bar_ = addToolBar(tr("工具栏"));
+    d_->tool_bar_->setMovable(false);
+    d_->tool_bar_->setFloatable(false);
+    
+    // 设置工具栏样式
+    d_->tool_bar_->setStyleSheet(
+        "QToolBar {"
+        "    background: #f8f9fa;"
+        "    border-bottom: 1px solid #dee2e6;"
+        "    spacing: 5px;"
+        "}"
+        "QToolButton {"
+        "    background: transparent;"
+        "    border: none;"
+        "    padding: 8px;"
+        "    border-radius: 4px;"
+        "}"
+        "QToolButton:hover {"
+        "    background: #e9ecef;"
+        "}"
+        "QToolButton:pressed {"
+        "    background: #dee2e6;"
+        "}"
+    );
 
-    // 添加工具栏按钮
-    QAction* control_action = tool_bar_->addAction(tr("控制"));
-    QAction* navigation_action = tool_bar_->addAction(tr("导航"));
+    // 创建控制面板按钮
+    auto* control_action = new QAction(QIcon::fromTheme("video-display"), tr("控制面板"), this);
+    control_action->setCheckable(true);
+    control_action->setChecked(true);
+    d_->tool_bar_->addAction(control_action);
+
+    // 创建导航面板按钮
+    auto* navigation_action = new QAction(QIcon::fromTheme("map"), tr("导航面板"), this);
+    navigation_action->setCheckable(true);
+    d_->tool_bar_->addAction(navigation_action);
+
+    // 创建设置按钮
+    auto* settings_action = new QAction(QIcon::fromTheme("preferences-system"), tr("设置"), this);
+    settings_action->setCheckable(true);
+    d_->tool_bar_->addAction(settings_action);
+
+    // 添加伸缩器
+    auto* spacer = new QWidget();
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    d_->tool_bar_->addWidget(spacer);
+
+    // 添加状态标签
+    auto* status_label = new QLabel(tr("就绪"), this);
+    d_->tool_bar_->addWidget(status_label);
 
     // 连接信号
-    connect(control_action, &QAction::triggered, [this]() { switchToPage(0); });
-    connect(navigation_action, &QAction::triggered, [this]() { switchToPage(1); });
-}
-
-void MainWindow::createPages()
-{
-    // 创建主页面
-    QWidget* main_page = new QWidget;
-    QHBoxLayout* main_layout = new QHBoxLayout(main_page);
-    main_layout->setContentsMargins(0, 0, 0, 0);
-    
-    // 左侧状态面板
-    QWidget* status_widget = new QWidget;
-    QVBoxLayout* status_layout = new QVBoxLayout(status_widget);
-    status_layout->setContentsMargins(5, 5, 5, 5);
-    
-    status_panel_ = new RobotStatusPanel(status_widget);
-    status_layout->addWidget(status_panel_);
-    status_layout->addStretch();
-    
-    status_widget->setMaximumWidth(250);
-    main_layout->addWidget(status_widget);
-    
-    // 中央显示区域
-    QWidget* center_widget = new QWidget;
-    QVBoxLayout* center_layout = new QVBoxLayout(center_widget);
-    center_layout->setContentsMargins(0, 0, 0, 0);
-    
-    // 摄像头视图（调整大小）
-    camera_view_ = new CameraView(center_widget);
-    camera_view_->setMinimumHeight(300);
-    camera_view_->setMaximumHeight(400);
-    center_layout->addWidget(camera_view_);
-    
-    main_layout->addWidget(center_widget);
-    
-    // 创建导航页面
-    QWidget* nav_page = new QWidget;
-    QHBoxLayout* nav_layout = new QHBoxLayout(nav_page);
-    nav_layout->setContentsMargins(0, 0, 0, 0);
-    
-    // 左侧地图显示
-    rviz_view_ = new RVizView(nav_page);
-    
-    // 右侧导航控制面板
-    QWidget* nav_control_panel = new QWidget;
-    QVBoxLayout* nav_control_layout = new QVBoxLayout(nav_control_panel);
-    nav_control_layout->setContentsMargins(5, 5, 5, 5);
-    
-    navigation_panel_ = new NavigationPanel(robot_controller_, nav_control_panel);
-    nav_control_layout->addWidget(navigation_panel_);
-    
-    // 添加建图控制
-    QGroupBox* mapping_group = new QGroupBox(tr("建图控制"));
-    QVBoxLayout* mapping_layout = new QVBoxLayout(mapping_group);
-    
-    QPushButton* start_mapping_btn = new QPushButton(tr("开始建图"));
-    QPushButton* stop_mapping_btn = new QPushButton(tr("停止建图"));
-    QPushButton* save_map_btn = new QPushButton(tr("保存地图"));
-    
-    mapping_layout->addWidget(start_mapping_btn);
-    mapping_layout->addWidget(stop_mapping_btn);
-    mapping_layout->addWidget(save_map_btn);
-    
-    nav_control_layout->addWidget(mapping_group);
-    nav_control_layout->addStretch();
-    
-    nav_control_panel->setMaximumWidth(300);
-    
-    // 添加到导航页面布局
-    nav_layout->addWidget(rviz_view_);
-    nav_layout->addWidget(nav_control_panel);
-    
-    // 添加页面到堆叠式窗口部件
-    stacked_widget_->addWidget(main_page);
-    stacked_widget_->addWidget(nav_page);
-    
-    // 默认显示主页面
-    stacked_widget_->setCurrentIndex(0);
-}
-
-void MainWindow::createFloatingControlPanel()
-{
-    // 创建浮动控制面板
-    QDockWidget* control_dock = new QDockWidget(tr("控制面板"), this);
-    control_dock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    control_dock->setFeatures(QDockWidget::DockWidgetFloatable | 
-                             QDockWidget::DockWidgetMovable);
-    
-    QWidget* control_widget = new QWidget(control_dock);
-    QVBoxLayout* control_layout = new QVBoxLayout(control_widget);
-    control_layout->setContentsMargins(5, 5, 5, 5);
-    
-    // 添加速度仪表盘（紧凑版）
-    QHBoxLayout* dashboard_layout = new QHBoxLayout;
-    speed_dashboard_ = new SpeedDashboard(control_widget);
-    speed_dashboard_->setMaximumHeight(100);  // 限制仪表盘高度
-    dashboard_layout->addWidget(speed_dashboard_);
-    control_layout->addLayout(dashboard_layout);
-    
-    // 添加摇杆控制
-    QGroupBox* joystick_group = new QGroupBox(tr("摇杆控制"));
-    QVBoxLayout* joystick_layout = new QVBoxLayout(joystick_group);
-    joystick_layout->setSpacing(5);
-    
-    QWidget* joysticks_container = new QWidget;
-    QHBoxLayout* joysticks_layout = new QHBoxLayout(joysticks_container);
-    joysticks_layout->setSpacing(10);
-    
-    linear_joystick_ = new JoystickWidget;
-    angular_joystick_ = new JoystickWidget;
-    linear_joystick_->setFixedSize(100, 100);
-    angular_joystick_->setFixedSize(100, 100);
-    
-    joysticks_layout->addWidget(linear_joystick_);
-    joysticks_layout->addWidget(angular_joystick_);
-    
-    joystick_layout->addWidget(joysticks_container);
-    control_layout->addWidget(joystick_group);
-    
-    // 添加键盘控制提示
-    QGroupBox* keyboard_group = new QGroupBox(tr("键盘控制"));
-    QVBoxLayout* keyboard_layout = new QVBoxLayout(keyboard_group);
-    QLabel* keyboard_hint = new QLabel(tr(
-        "↑: 前进  ↓: 后退\n"
-        "←: 左转  →: 右转\n"
-        "空格: 紧急停止"
-    ));
-    keyboard_hint->setAlignment(Qt::AlignCenter);
-    keyboard_layout->addWidget(keyboard_hint);
-    control_layout->addWidget(keyboard_group);
-    
-    control_dock->setWidget(control_widget);
-    addDockWidget(Qt::RightDockWidgetArea, control_dock);
-    control_dock->setMinimumWidth(250);
-    control_dock->setMaximumWidth(300);
-}
-
-void MainWindow::switchToPage(int index)
-{
-    stacked_widget_->setCurrentIndex(index);
-    
-    // 根据页面更新状态
-    switch (index) {
-        case 0:
-            statusBar()->showMessage(tr("控制模式"));
-            break;
-        case 1:
-            statusBar()->showMessage(tr("导航模式"));
-            break;
-    }
-}
-
-void MainWindow::setupConnections()
-{
-    // 连接定时器
-    connect(update_timer_, &QTimer::timeout, this, [this]() {
-        // 处理ROS消息
-        if (ros::ok()) {
-            ros::spinOnce();
-            updateRobotState();
+    connect(control_action, &QAction::triggered, this, [this, control_action, navigation_action, settings_action]() {
+        if (control_action->isChecked()) {
+            navigation_action->setChecked(false);
+            settings_action->setChecked(false);
+            d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
+        } else {
+            control_action->setChecked(true);
         }
     });
-    update_timer_->start(50);  // 20Hz更新频率
 
-    // 连接键盘定时器
-    connect(keyboard_timer_, &QTimer::timeout, this, &MainWindow::updateKeyboardControl);
-    keyboard_timer_->start(100);  // 10Hz更新频率
-
-    // 连接摇杆信号
-    connect(linear_joystick_, &JoystickWidget::positionChanged,
-            this, [this](double x, double y) {
-                double linear_vel = -y * robot_controller_->getMaxLinearVelocity();
-                robot_controller_->setLinearVelocity(linear_vel);
-                speed_dashboard_->setLinearSpeed(linear_vel);
-            });
-    
-    connect(angular_joystick_, &JoystickWidget::positionChanged,
-            this, [this](double x, double y) {
-                double angular_vel = -x * robot_controller_->getMaxAngularVelocity();
-                robot_controller_->setAngularVelocity(angular_vel);
-                speed_dashboard_->setAngularSpeed(angular_vel);
-            });
-
-    // 连接地图视图信号
-    connect(rviz_view_, &RVizView::goalSelected,
-            this, &MainWindow::onGoalSelected);
-
-    // 连接ROS控制器的数据更新信号
-    connect(robot_controller_.get(), &RobotController::mapUpdated,
-            this, &MainWindow::handleMapUpdate);
-    connect(robot_controller_.get(), &RobotController::odomUpdated,
-            this, &MainWindow::handleOdomUpdate);
-    connect(robot_controller_.get(), &RobotController::scanUpdated,
-            this, &MainWindow::handleScanUpdate);
-    connect(robot_controller_.get(), &RobotController::statusChanged,
-            this, &MainWindow::onRobotStatusChanged);
-
-    // 连接导航面板的信号
-    connect(navigation_panel_, &NavigationPanel::navigationGoalSet,
-            [this](double x, double y, double theta) {
-                robot_controller_->setNavigationGoal(x, y, theta);
-            });
-
-    // 连接按钮信号
-    QPushButton* start_mapping_btn = findChild<QPushButton*>("start_mapping_btn");
-    connect(start_mapping_btn, &QPushButton::clicked,
-            [this]() { robot_controller_->startMapping(); });
-
-    QPushButton* stop_mapping_btn = findChild<QPushButton*>("stop_mapping_btn");
-    connect(stop_mapping_btn, &QPushButton::clicked,
-            [this]() { robot_controller_->stopMapping(); });
-
-    QPushButton* save_map_btn = findChild<QPushButton*>("save_map_btn");
-    connect(save_map_btn, &QPushButton::clicked,
-            [this]() { robot_controller_->saveMap("map"); });
-
-    QPushButton* load_map_btn = findChild<QPushButton*>("load_map_btn");
-    connect(load_map_btn, &QPushButton::clicked,
-            [this]() { robot_controller_->loadMap("map.yaml"); });
-
-    QPushButton* set_pose_btn = findChild<QPushButton*>("set_pose_btn");
-    connect(set_pose_btn, &QPushButton::clicked,
-            [this]() { /* 实现设置初始位置的逻辑 */ });
-
-    QPushButton* clear_costmap_btn = findChild<QPushButton*>("clear_costmap_btn");
-    connect(clear_costmap_btn, &QPushButton::clicked,
-            [this]() { robot_controller_->updateCostmap(); });
-
-    // 连接导航模式选择
-    QRadioButton* normal_mode = findChild<QRadioButton*>("normal_mode");
-    connect(normal_mode, &QRadioButton::toggled,
-            [this](bool checked) { if (checked) robot_controller_->setNavigationMode(0); });
-
-    QRadioButton* fast_mode = findChild<QRadioButton*>("fast_mode");
-    connect(fast_mode, &QRadioButton::toggled,
-            [this](bool checked) { if (checked) robot_controller_->setNavigationMode(1); });
-
-    QRadioButton* precise_mode = findChild<QRadioButton*>("precise_mode");
-    connect(precise_mode, &QRadioButton::toggled,
-            [this](bool checked) { if (checked) robot_controller_->setNavigationMode(2); });
-}
-
-void MainWindow::handleMapUpdate(const std::shared_ptr<nav_msgs::OccupancyGrid>& map)
-{
-    rviz_view_->updateMap(map);
-}
-
-void MainWindow::handleOdomUpdate(const std::shared_ptr<nav_msgs::Odometry>& odom)
-{
-    rviz_view_->updateRobotPose(odom);
-}
-
-void MainWindow::handleScanUpdate(const std::shared_ptr<sensor_msgs::LaserScan>& scan)
-{
-    rviz_view_->updateLaserScan(scan);
-}
-
-void MainWindow::onJoystickMoved(double x, double y)
-{
-    // TODO: 实现机器人速度控制
-}
-
-void MainWindow::keyPressEvent(QKeyEvent* event)
-{
-    if (event->isAutoRepeat()) {
-        return;  // 忽略按键重复
-    }
-
-    switch (event->key()) {
-        case Qt::Key_Up:
-            current_linear_vel_ = max_linear_vel_;
-            break;
-        case Qt::Key_Down:
-            current_linear_vel_ = -max_linear_vel_;
-            break;
-        case Qt::Key_Left:
-            current_angular_vel_ = max_angular_vel_;
-            break;
-        case Qt::Key_Right:
-            current_angular_vel_ = -max_angular_vel_;
-            break;
-        case Qt::Key_Space:
-            // 紧急停止
-            current_linear_vel_ = 0.0;
-            current_angular_vel_ = 0.0;
-            robot_controller_->setLinearVelocity(0.0);
-            robot_controller_->setAngularVelocity(0.0);
-            break;
-    }
-    // 更新按键状态
-    key_states_[event->key()] = true;
-    updateRobotVelocity();
-}
-
-void MainWindow::keyReleaseEvent(QKeyEvent* event)
-{
-    if (event->isAutoRepeat()) {
-        return;  // 忽略按键重复
-    }
-
-    // 更新按键状态
-    key_states_[event->key()] = false;
-
-    // 检查其他方向键的状态
-    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) {
-        if (!key_states_[Qt::Key_Up] && !key_states_[Qt::Key_Down]) {
-            current_linear_vel_ = 0.0;
+    connect(navigation_action, &QAction::triggered, this, [this, control_action, navigation_action, settings_action]() {
+        if (navigation_action->isChecked()) {
+            control_action->setChecked(false);
+            settings_action->setChecked(false);
+            d_->stacked_widget_->setCurrentWidget(d_->navigation_panel_.get());
+        } else {
+            navigation_action->setChecked(true);
         }
-    }
-    if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
-        if (!key_states_[Qt::Key_Left] && !key_states_[Qt::Key_Right]) {
-            current_angular_vel_ = 0.0;
+    });
+
+    connect(settings_action, &QAction::triggered, this, [this, control_action, navigation_action, settings_action]() {
+        if (settings_action->isChecked()) {
+            control_action->setChecked(false);
+            navigation_action->setChecked(false);
+            d_->stacked_widget_->setCurrentWidget(d_->settings_panel_.get());
+        } else {
+            settings_action->setChecked(true);
         }
-    }
-    updateRobotVelocity();
-}
-
-void MainWindow::updateRobotVelocity()
-{
-    // 发送速度命令到机器人
-    robot_controller_->setLinearVelocity(current_linear_vel_);
-    robot_controller_->setAngularVelocity(current_angular_vel_);
-    
-    // 更新速度仪表盘显示
-    if (speed_dashboard_) {
-        speed_dashboard_->setLinearSpeed(current_linear_vel_);
-        speed_dashboard_->setAngularSpeed(current_angular_vel_);
-    }
-}
-
-void MainWindow::updateKeyboardControl()
-{
-    // 定期更新速度命令，确保持续运动
-    if (key_states_[Qt::Key_Up]) {
-        current_linear_vel_ = max_linear_vel_;
-    } else if (key_states_[Qt::Key_Down]) {
-        current_linear_vel_ = -max_linear_vel_;
-    }
-
-    if (key_states_[Qt::Key_Left]) {
-        current_angular_vel_ = max_angular_vel_;
-    } else if (key_states_[Qt::Key_Right]) {
-        current_angular_vel_ = -max_angular_vel_;
-    }
-
-    updateRobotVelocity();
-}
-
-void MainWindow::setupRosConnections()
-{
-    // 设置发布器和订阅器
-    goal_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
-    path_sub_ = nh_.subscribe("/move_base/NavfnROS/plan", 1, &MainWindow::pathCallback, this);
-    map_sub_ = nh_.subscribe("/map", 1, &MainWindow::mapCallback, this);
-    scan_sub_ = nh_.subscribe("/scan", 1, &MainWindow::scanCallback, this);
-    odom_sub_ = nh_.subscribe("/odom", 1, &MainWindow::odomCallback, this);
+    });
 }
 
 void MainWindow::createDisplayOptionsPanel()
 {
     // 创建显示选项面板
-    QDockWidget* dock = new QDockWidget(tr("显示选项"), this);
+    auto* dock = new QDockWidget(tr("显示选项"), this);
+    dock->setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
     dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    
-    QWidget* content = new QWidget(dock);
-    QVBoxLayout* layout = new QVBoxLayout(content);
-    
-    // 创建复选框
-    auto createCheckBox = [](const QString& text, bool checked) {
-        QCheckBox* box = new QCheckBox(text);
-        box->setChecked(checked);
+
+    auto* content = new QWidget(dock);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(10, 10, 10, 10);
+    layout->setSpacing(10);
+
+    // 创建显示选项复选框
+    auto createCheckBox = [](const QString& text, QWidget* parent) {
+        auto* box = new QCheckBox(text, parent);
+        box->setStyleSheet(
+            "QCheckBox {"
+            "    spacing: 5px;"
+            "}"
+            "QCheckBox::indicator {"
+            "    width: 18px;"
+            "    height: 18px;"
+            "    border: 1px solid #cccccc;"
+            "    border-radius: 3px;"
+            "}"
+            "QCheckBox::indicator:checked {"
+            "    background-color: #007AFF;"
+            "    border-color: #007AFF;"
+            "    image: url(:/icons/check.png);"
+            "}"
+            "QCheckBox::indicator:unchecked:hover {"
+            "    border-color: #007AFF;"
+            "}"
+        );
         return box;
     };
-    
-    QCheckBox* show_grid = createCheckBox("显示网格", true);
-    QCheckBox* show_map = createCheckBox("显示地图", true);
-    QCheckBox* show_robot = createCheckBox("显示机器人", true);
-    QCheckBox* show_laser = createCheckBox("显示激光扫描", true);
-    QCheckBox* show_path = createCheckBox("显示路径", true);
-    QCheckBox* show_goal = createCheckBox("显示目标点", true);
-    
+
+    auto* grid_box = createCheckBox(tr("显示网格"), content);
+    auto* map_box = createCheckBox(tr("显示地图"), content);
+    auto* robot_box = createCheckBox(tr("显示机器人"), content);
+    auto* laser_box = createCheckBox(tr("显示激光"), content);
+    auto* path_box = createCheckBox(tr("显示路径"), content);
+    auto* goal_box = createCheckBox(tr("显示目标"), content);
+
+    // 设置默认状态
+    grid_box->setChecked(true);
+    map_box->setChecked(true);
+    robot_box->setChecked(true);
+    laser_box->setChecked(true);
+    path_box->setChecked(true);
+    goal_box->setChecked(true);
+
     // 添加到布局
-    layout->addWidget(show_grid);
-    layout->addWidget(show_map);
-    layout->addWidget(show_robot);
-    layout->addWidget(show_laser);
-    layout->addWidget(show_path);
-    layout->addWidget(show_goal);
+    layout->addWidget(grid_box);
+    layout->addWidget(map_box);
+    layout->addWidget(robot_box);
+    layout->addWidget(laser_box);
+    layout->addWidget(path_box);
+    layout->addWidget(goal_box);
     layout->addStretch();
-    
+
+    // 设置对象名称
+    grid_box->setObjectName("grid_box");
+    map_box->setObjectName("map_box");
+    robot_box->setObjectName("robot_box");
+    laser_box->setObjectName("laser_box");
+    path_box->setObjectName("path_box");
+    goal_box->setObjectName("goal_box");
+
     // 连接信号
-    connect(show_grid, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
-    connect(show_map, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
-    connect(show_robot, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
-    connect(show_laser, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
-    connect(show_path, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
-    connect(show_goal, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
-    
+    connect(grid_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
+    connect(map_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
+    connect(robot_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
+    connect(laser_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
+    connect(path_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
+    connect(goal_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
+
     dock->setWidget(content);
     addDockWidget(Qt::RightDockWidgetArea, dock);
-    display_options_dock_ = dock;
+    d_->display_options_dock_ = dock;
 }
 
-void MainWindow::onDisplayOptionsChanged()
+void MainWindow::connectSignals()
 {
-    QWidget* content = display_options_dock_->widget();
-    const QList<QCheckBox*> boxes = content->findChildren<QCheckBox*>();
-    
-    for (const QCheckBox* box : boxes) {
-        if (box->text() == "显示网格") {
-            rviz_view_->setDisplayEnabled("Grid", box->isChecked());
-        }
-        else if (box->text() == "显示地图") {
-            rviz_view_->setDisplayEnabled("Map", box->isChecked());
-        }
-        else if (box->text() == "显示机器人") {
-            rviz_view_->setDisplayEnabled("Robot Model", box->isChecked());
-        }
-        else if (box->text() == "显示激光扫描") {
-            rviz_view_->setDisplayEnabled("LaserScan", box->isChecked());
-        }
-        else if (box->text() == "显示路径") {
-            rviz_view_->setDisplayEnabled("Path", box->isChecked());
-        }
-        else if (box->text() == "显示目标点") {
-            rviz_view_->setDisplayEnabled("Goal", box->isChecked());
-        }
+    if (d_->rviz_view_) {
+        connect(d_->rviz_view_.get(), &RVizView::goalSelected,
+                this, &MainWindow::onGoalSelected);
+        connect(d_->rviz_view_.get(), &RVizView::initialPoseSelected,
+                this, &MainWindow::onInitialPoseSelected);
+    }
+
+    if (d_->navigation_panel_) {
+        // 连接导航面板的信号
+    }
+}
+
+void MainWindow::onLinearJoystickMoved(double x, double y)
+{
+    if (!d_->robot_controller_) return;
+
+    double linear_vel = -y * d_->max_linear_vel_;
+    d_->robot_controller_->setLinearVelocity(linear_vel);
+    d_->current_linear_vel_ = linear_vel;
+
+    if (d_->speed_dashboard_) {
+        d_->speed_dashboard_->setLinearSpeed(linear_vel);
+    }
+}
+
+void MainWindow::onAngularJoystickMoved(double x, double y)
+{
+    if (!d_->robot_controller_) return;
+
+    double angular_vel = -x * d_->max_angular_vel_;
+    d_->robot_controller_->setAngularVelocity(angular_vel);
+    d_->current_angular_vel_ = angular_vel;
+
+    if (d_->speed_dashboard_) {
+        d_->speed_dashboard_->setAngularSpeed(angular_vel);
     }
 }
 
 void MainWindow::onGoalSelected(const geometry_msgs::PoseStamped& goal)
 {
-    // 发布导航目标点
-    goal_pub_.publish(goal);
+    if (d_->robot_controller_) {
+        d_->robot_controller_->setNavigationGoal(goal);
+    }
 }
 
-// ROS回调函数
-void MainWindow::pathCallback(const nav_msgs::Path::ConstPtr& path)
+void MainWindow::onInitialPoseSelected(const geometry_msgs::PoseWithCovarianceStamped& pose)
 {
-    if (!path) return;
-    rviz_view_->updatePath(path->poses);
+    if (d_->robot_controller_) {
+        d_->robot_controller_->setInitialPose(pose);
+    }
 }
 
-void MainWindow::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& map)
+void MainWindow::createFloatingControlPanel()
 {
-    if (!map) return;
-    rviz_view_->updateMap(std::make_shared<nav_msgs::OccupancyGrid>(*map));
+    QDockWidget* dock = new QDockWidget(tr("速度控制"), this);
+    dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+    QWidget* control_widget = new QWidget(dock);
+    QVBoxLayout* layout = new QVBoxLayout(control_widget);
+
+    d_->speed_dashboard_ = std::make_shared<SpeedDashboard>(control_widget);
+    layout->addWidget(d_->speed_dashboard_.get());
+
+    dock->setWidget(control_widget);
+    addDockWidget(Qt::RightDockWidgetArea, dock);
 }
 
-void MainWindow::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
+void MainWindow::setupSubscribers()
 {
-    if (!scan) return;
-    rviz_view_->updateLaserScan(std::make_shared<sensor_msgs::LaserScan>(*scan));
+    d_->goal_pub_ = d_->nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
+    d_->path_sub_ = d_->nh_.subscribe("/move_base/NavfnROS/plan", 1, &MainWindow::pathCallback, this);
+    d_->map_sub_ = d_->nh_.subscribe("/map", 1, &MainWindow::mapCallback, this);
+    d_->scan_sub_ = d_->nh_.subscribe("/scan", 1, &MainWindow::scanCallback, this);
+    d_->odom_sub_ = d_->nh_.subscribe("/odom", 1, &MainWindow::odomCallback, this);
 }
 
-void MainWindow::odomCallback(const nav_msgs::Odometry::ConstPtr& odom)
+void MainWindow::handleMapUpdate(const nav_msgs::OccupancyGridConstPtr& msg)
 {
-    if (!odom) return;
-    rviz_view_->updateRobotPose(std::make_shared<nav_msgs::Odometry>(*odom));
+    if (d_->rviz_view_) {
+        // 确保地图显示已启用
+        d_->rviz_view_->setDisplayEnabled("Map", true);
+        // 更新地图数据
+        d_->rviz_view_->updateMap(msg);
+    }
+}
+
+void MainWindow::handleOdomUpdate(const nav_msgs::OdometryConstPtr& msg)
+{
+    if (d_->rviz_view_) {
+        d_->rviz_view_->updateRobotPose(msg);
+    }
+}
+
+void MainWindow::handleScanUpdate(const sensor_msgs::LaserScanConstPtr& msg)
+{
+    if (d_->rviz_view_) {
+        d_->rviz_view_->updateLaserScan(msg);
+    }
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event)
+{
+    if (!event->isAutoRepeat()) {
+        d_->key_states_[event->key()] = true;
+        updateKeyboardControl();
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
+void MainWindow::keyReleaseEvent(QKeyEvent* event)
+{
+    if (!event->isAutoRepeat()) {
+        d_->key_states_[event->key()] = false;
+        updateKeyboardControl();
+
+        if (event->key() == Qt::Key_Space && d_->robot_controller_) {
+            d_->robot_controller_->stop();
+            d_->current_linear_vel_ = 0.0;
+            d_->current_angular_vel_ = 0.0;
+            if (d_->speed_dashboard_) {
+                d_->speed_dashboard_->setLinearSpeed(0.0);
+                d_->speed_dashboard_->setAngularSpeed(0.0);
+            }
+        }
+    }
+    QMainWindow::keyReleaseEvent(event);
+}
+
+void MainWindow::updateKeyboardControl()
+{
+    if (!d_->robot_controller_) return;
+
+    // 获取按键状态
+    bool up = d_->key_states_.value(Qt::Key_W) || d_->key_states_.value(Qt::Key_Up);
+    bool down = d_->key_states_.value(Qt::Key_S) || d_->key_states_.value(Qt::Key_Down);
+    bool left = d_->key_states_.value(Qt::Key_A) || d_->key_states_.value(Qt::Key_Left);
+    bool right = d_->key_states_.value(Qt::Key_D) || d_->key_states_.value(Qt::Key_Right);
+
+    // 计算线速度和角速度
+    double linear_vel = 0.0;
+    double angular_vel = 0.0;
+
+    if (up && !down) {
+        linear_vel = d_->max_linear_vel_;
+    } else if (down && !up) {
+        linear_vel = -d_->max_linear_vel_;
+    }
+
+    if (left && !right) {
+        angular_vel = d_->max_angular_vel_;
+    } else if (right && !left) {
+        angular_vel = -d_->max_angular_vel_;
+    }
+
+    // 如果速度发生变化，则更新
+    if (linear_vel != d_->current_linear_vel_ || angular_vel != d_->current_angular_vel_) {
+        d_->current_linear_vel_ = linear_vel;
+        d_->current_angular_vel_ = angular_vel;
+
+        // 发送速度命令
+        d_->robot_controller_->setLinearVelocity(linear_vel);
+        d_->robot_controller_->setAngularVelocity(angular_vel);
+
+        // 更新速度显示
+        if (d_->speed_dashboard_) {
+            d_->speed_dashboard_->setLinearSpeed(linear_vel);
+            d_->speed_dashboard_->setAngularSpeed(angular_vel);
+        }
+    }
 }
 
 void MainWindow::updateRobotState()
 {
-    if (!ros::ok()) return;
+    if (!d_->robot_controller_) return;
+    // TODO: 更新机器人状态显示
+}
 
-    // 更新机器人状态面板
-    if (status_panel_) {
-        status_panel_->updateBatteryLevel(robot_controller_->getBatteryLevel());
-        status_panel_->updateWifiStrength(robot_controller_->getWifiStrength());
-        status_panel_->updateStatus(robot_controller_->getStatus());
+void MainWindow::updateRobotVelocity()
+{
+    if (!d_->robot_controller_ || !d_->speed_dashboard_) return;
+
+    // 获取当前速度
+    d_->current_linear_vel_ = d_->robot_controller_->getCurrentLinearVelocity();
+    d_->current_angular_vel_ = d_->robot_controller_->getCurrentAngularVelocity();
+
+    // 更新速度显示
+    d_->speed_dashboard_->setLinearSpeed(d_->current_linear_vel_);
+    d_->speed_dashboard_->setAngularSpeed(d_->current_angular_vel_);
+}
+
+void MainWindow::setupRosConnections()
+{
+    d_->goal_pub_ = d_->nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
+    d_->path_sub_ = d_->nh_.subscribe("/move_base/NavfnROS/plan", 1, &MainWindow::pathCallback, this);
+    d_->map_sub_ = d_->nh_.subscribe("/map", 1, &MainWindow::mapCallback, this);
+    d_->scan_sub_ = d_->nh_.subscribe("/scan", 1, &MainWindow::scanCallback, this);
+    d_->odom_sub_ = d_->nh_.subscribe("/odom", 1, &MainWindow::odomCallback, this);
+}
+
+void MainWindow::onDisplayOptionsChanged()
+{
+    QWidget* content = d_->display_options_dock_->widget();
+    if (!content) return;
+
+    QCheckBox* box = content->findChild<QCheckBox*>("grid_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Grid", box->isChecked());
+        }
     }
 
-    // 更新速度仪表盘
-    if (speed_dashboard_) {
-        speed_dashboard_->setLinearSpeed(robot_controller_->getCurrentLinearVelocity());
-        speed_dashboard_->setAngularSpeed(robot_controller_->getCurrentAngularVelocity());
+    box = content->findChild<QCheckBox*>("map_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Map", box->isChecked());
+        }
     }
 
-    // 尝试获取最新的里程计数据
-    auto odom = ros::topic::waitForMessage<nav_msgs::Odometry>("/odom", ros::Duration(0.1));
-    if (odom) {
-        auto std_odom = std::make_shared<nav_msgs::Odometry>(*odom);
-        handleOdomUpdate(std_odom);
+    box = content->findChild<QCheckBox*>("robot_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Robot Model", box->isChecked());
+        }
     }
 
-    // 尝试获取最新的激光数据
-    auto scan = ros::topic::waitForMessage<sensor_msgs::LaserScan>("/scan", ros::Duration(0.1));
-    if (scan) {
-        auto std_scan = std::make_shared<sensor_msgs::LaserScan>(*scan);
-        handleScanUpdate(std_scan);
+    box = content->findChild<QCheckBox*>("laser_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("LaserScan", box->isChecked());
+        }
+    }
+
+    box = content->findChild<QCheckBox*>("path_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Path", box->isChecked());
+        }
+    }
+
+    box = content->findChild<QCheckBox*>("goal_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Goal", box->isChecked());
+        }
+    }
+}
+
+void MainWindow::pathCallback(const nav_msgs::PathConstPtr& msg)
+{
+    if (d_->rviz_view_) {
+        d_->rviz_view_->updatePath(msg->poses);
+    }
+}
+
+void MainWindow::mapCallback(const nav_msgs::OccupancyGridConstPtr& msg)
+{
+    if (!msg) {
+        ROS_WARN("Received null map message");
+        return;
+    }
+
+    ROS_INFO_ONCE("Received first map update");
+    handleMapUpdate(msg);
+}
+
+void MainWindow::scanCallback(const sensor_msgs::LaserScanConstPtr& msg)
+{
+    handleScanUpdate(msg);
+}
+
+void MainWindow::odomCallback(const nav_msgs::OdometryConstPtr& msg)
+{
+    handleOdomUpdate(msg);
+    
+    // 更新速度显示
+    if (d_->speed_dashboard_) {
+        double linear_vel = msg->twist.twist.linear.x;
+        double angular_vel = msg->twist.twist.angular.z;
+        d_->speed_dashboard_->setLinearSpeed(linear_vel);
+        d_->speed_dashboard_->setAngularSpeed(angular_vel);
     }
 }
 
 void MainWindow::onRobotStatusChanged(const QString& status)
 {
-    // 在状态栏显示状态信息
-    statusBar()->showMessage(status);
-    
-    // 如果是导航服务器未连接的消息，禁用相关功能
-    if (status.contains("导航服务器未连接")) {
-        if (navigation_panel_) {
-            navigation_panel_->setEnabled(false);
-        }
+    if (statusBar()) {
+        statusBar()->showMessage(status);
     }
 } 

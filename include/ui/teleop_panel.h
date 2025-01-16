@@ -17,7 +17,7 @@ public:
                         QWidget* parent = nullptr);
     ~TeleopPanel();
 
-private slots:
+private Q_SLOTS:
     void onForwardButtonPressed();
     void onBackwardButtonPressed();
     void onLeftButtonPressed();

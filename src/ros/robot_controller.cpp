@@ -4,524 +4,444 @@
  */
 
 #include "ros/robot_controller.h"
-#include <geometry_msgs/Twist.h>
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
-#include <nav_msgs/Odometry.h>
-#include <nav_msgs/GetMap.h>
-#include <std_msgs/Float32.h>
-#include <std_srvs/Empty.h>
-#include <move_base_msgs/MoveBaseAction.h>
-#include <actionlib/client/simple_action_client.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <fstream>
-
-typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+#include <ros/master.h>
+#include <QDebug>
 
 RobotController::RobotController(QObject* parent)
     : QObject(parent)
-    , is_navigating_(false)
-    , is_mapping_(false)
-    , navigation_mode_(0)
-    , max_linear_velocity_(0.22)  // TurtleBot3 Burger的最大线速度
-    , max_angular_velocity_(2.84) // TurtleBot3 Burger的最大角速度
-    , current_linear_velocity_(0.0)
-    , current_angular_velocity_(0.0)
 {
-    // 从参数服务器读取配置
-    ros::NodeHandle private_nh("~");
-    std::string robot_name, cmd_vel_topic, odom_topic, scan_topic, map_topic, initial_pose_topic;
+    // 设置发布者和订阅者
+    setupPublishers();
+    setupSubscribers();
     
-    private_nh.param<std::string>("robot_name", robot_name, "turtlebot3");
-    private_nh.param<std::string>("cmd_vel_topic", cmd_vel_topic, "/cmd_vel");
-    private_nh.param<std::string>("odom_topic", odom_topic, "/odom");
-    private_nh.param<std::string>("scan_topic", scan_topic, "/scan");
-    private_nh.param<std::string>("map_topic", map_topic, "/map");
-    private_nh.param<std::string>("initial_pose_topic", initial_pose_topic, "/initialpose");
+    // 初始化服务客户端
+    global_localization_client_ = nh_.serviceClient<std_srvs::Empty>("/global_localization");
+    clear_costmaps_client_ = nh_.serviceClient<std_srvs::Empty>("/move_base/clear_costmaps");
     
-    private_nh.param<double>("max_linear_velocity", max_linear_velocity_, 0.22);
-    private_nh.param<double>("max_angular_velocity", max_angular_velocity_, 2.84);
-
-    // 创建发布器
-    cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>(cmd_vel_topic, 1);
-    initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>(initial_pose_topic, 1);
-
-    // 创建订阅器
-    map_sub_ = nh_.subscribe(map_topic, 1, &RobotController::mapCallback, this);
-    odom_sub_ = nh_.subscribe(odom_topic, 1, &RobotController::odomCallback, this);
-    scan_sub_ = nh_.subscribe(scan_topic, 1, &RobotController::scanCallback, this);
-
-    // 创建action客户端并设置超时
-    move_base_client_ = std::make_shared<MoveBaseClient>("move_base", false);  // 设置为false表示不自动启动
+    // 初始化 action 客户端
+    move_base_client_ = std::make_unique<actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction>>("move_base", true);
     
-    ROS_INFO("Waiting for move_base action server...");
-    ros::Time start_time = ros::Time::now();
-    ros::Duration timeout(5.0);  // 5秒超时
-    
-    while (ros::ok() && !move_base_client_->isServerConnected()) {
-        if (ros::Time::now() - start_time > timeout) {
-            ROS_WARN("Move base server connection timeout after 5 seconds");
-            emit statusChanged("导航服务器未连接，部分功能可能不可用");
-            return;
-        }
-        ros::Duration(0.1).sleep();
-        ros::spinOnce();
+    // 等待 action 服务器启动
+    if (!move_base_client_->waitForServer(ros::Duration(5.0))) {
+        ROS_WARN("Move base action server not available");
     }
     
-    if (move_base_client_->isServerConnected()) {
-        ROS_INFO("Connected to move_base action server");
-        emit statusChanged("导航服务器连接成功");
-    }
+    // 标记为已初始化
+    is_initialized_ = true;
 }
 
 RobotController::~RobotController()
 {
-    // 关闭所有发布器和订阅器
+    // 停止机器人
+    stop();
+    
+    // 清理资源
+    cleanup();
+}
+
+void RobotController::cleanup()
+{
+    // 停止所有活动的目标
+    if (move_base_client_ && move_base_client_->isServerConnected()) {
+        move_base_client_->cancelAllGoals();
+    }
+    
+    // 关闭所有发布者和订阅者
     cmd_vel_pub_.shutdown();
     initial_pose_pub_.shutdown();
-    map_sub_.shutdown();
     odom_sub_.shutdown();
+    battery_sub_.shutdown();
+    diagnostics_sub_.shutdown();
     scan_sub_.shutdown();
-}
-
-bool RobotController::setNavigationGoal(double x, double y, double theta)
-{
-    if (!move_base_client_->isServerConnected()) {
-        ROS_ERROR("Navigation server is not connected");
-        updateNavigationState(NavigationState::FAILED, "导航服务器未连接");
-        return false;
-    }
-
-    // 如果正在建图，不允许导航
-    if (is_mapping_) {
-        ROS_WARN("Cannot navigate while mapping is active");
-        updateNavigationState(NavigationState::FAILED, "正在建图中，无法导航");
-        return false;
-    }
-
-    move_base_msgs::MoveBaseGoal goal;
-    goal.target_pose.header.frame_id = "map";
-    goal.target_pose.header.stamp = ros::Time::now();
+    amcl_pose_sub_.shutdown();
+    map_sub_.shutdown();
     
-    goal.target_pose.pose.position.x = x;
-    goal.target_pose.pose.position.y = y;
+    // 关闭服务客户端
+    global_localization_client_.shutdown();
+    clear_costmaps_client_.shutdown();
+}
+
+void RobotController::setupPublishers()
+{
+    // 发布速度命令
+    cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
     
-    // 将偏航角转换为四元数
-    tf2::Quaternion q;
-    q.setRPY(0, 0, theta);
-    goal.target_pose.pose.orientation.w = q.w();
-    goal.target_pose.pose.orientation.x = q.x();
-    goal.target_pose.pose.orientation.y = q.y();
-    goal.target_pose.pose.orientation.z = q.z();
-
-    // 保存当前目标点
-    current_goal_ = goal.target_pose;
-    goal_distance_ = 0.0;  // 将在feedback回调中更新
-
-    // 根据导航模式设置参数
-    switch (navigation_mode_) {
-        case 1: // 快速模式
-            nh_.setParam("/move_base/DWAPlannerROS/max_vel_x", max_linear_velocity_);
-            nh_.setParam("/move_base/DWAPlannerROS/max_vel_theta", max_angular_velocity_);
-            break;
-        case 2: // 精确模式
-            nh_.setParam("/move_base/DWAPlannerROS/max_vel_x", max_linear_velocity_ * 0.5);
-            nh_.setParam("/move_base/DWAPlannerROS/max_vel_theta", max_angular_velocity_ * 0.5);
-            break;
-        default: // 默认模式
-            nh_.setParam("/move_base/DWAPlannerROS/max_vel_x", max_linear_velocity_ * 0.8);
-            nh_.setParam("/move_base/DWAPlannerROS/max_vel_theta", max_angular_velocity_ * 0.8);
-            break;
-    }
-
-    updateNavigationState(NavigationState::PLANNING, "正在规划路径...");
-    move_base_client_->sendGoal(goal,
-        boost::bind(&RobotController::doneCallback, this, _1, _2),
-        boost::bind(&RobotController::activeCallback, this),
-        boost::bind(&RobotController::feedbackCallback, this, _1));
-
-    is_navigating_ = true;
-    ROS_INFO("Navigation goal set to: x=%.2f, y=%.2f, theta=%.2f", x, y, theta);
-    return true;
+    // 发布初始位姿
+    initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("/initialpose", 1);
 }
 
-void RobotController::cancelNavigation()
+void RobotController::setupSubscribers()
 {
-    if (is_navigating_ && move_base_client_->isServerConnected()) {
-        move_base_client_->cancelAllGoals();
-        is_navigating_ = false;
-        updateNavigationState(NavigationState::CANCELED, "导航已取消");
-        ROS_INFO("Navigation cancelled");
-    }
-}
-
-void RobotController::doneCallback(const actionlib::SimpleClientGoalState& state,
-                                 const move_base_msgs::MoveBaseResultConstPtr& result)
-{
-    is_navigating_ = false;
-    
-    switch (state.state_) {
-        case actionlib::SimpleClientGoalState::SUCCEEDED:
-            updateNavigationState(NavigationState::SUCCEEDED, "已到达目标点");
-            break;
-        case actionlib::SimpleClientGoalState::ABORTED:
-            updateNavigationState(NavigationState::FAILED, "导航失败：无法到达目标点");
-            break;
-        case actionlib::SimpleClientGoalState::REJECTED:
-            updateNavigationState(NavigationState::FAILED, "导航失败：目标点无效");
-            break;
-        case actionlib::SimpleClientGoalState::PREEMPTED:
-            updateNavigationState(NavigationState::CANCELED, "导航已取消");
-            break;
-        default:
-            updateNavigationState(NavigationState::FAILED, 
-                QString("导航失败：%1").arg(state.getText().c_str()));
-            break;
-    }
-    
-    ROS_INFO("Navigation finished with state: %s", state.toString().c_str());
-}
-
-void RobotController::activeCallback()
-{
-    updateNavigationState(NavigationState::MOVING, "正在移动到目标点...");
-    ROS_INFO("Navigation goal is now active");
-}
-
-void RobotController::feedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback)
-{
-    // 更新导航进度
-    updateNavigationProgress(feedback->base_position);
-    
-    // 根据距离判断导航状态
-    if (goal_distance_ < 0.1) {  // 接近目标点
-        updateNavigationState(NavigationState::ADJUSTING, "正在微调位置...");
-    } else if (goal_distance_ < 0.5) {  // 接近但还需要调整
-        updateNavigationState(NavigationState::ROTATING, "正在调整朝向...");
-    } else {
-        updateNavigationState(NavigationState::MOVING, 
-            QString("距离目标点还有 %.1f 米").arg(goal_distance_));
-    }
-}
-
-void RobotController::updateNavigationProgress(const geometry_msgs::PoseStamped& current_pose)
-{
-    if (!is_navigating_) return;
-    
-    // 计算当前位置到目标点的距离
-    goal_distance_ = calculateDistance(current_pose, current_goal_);
-    
-    // 估算导航进度（基于距离）
-    double initial_distance = calculateDistance(current_goal_, current_pose);
-    if (initial_distance > 0) {
-        nav_progress_ = std::max(0.0, std::min(1.0, 1.0 - (goal_distance_ / initial_distance)));
-        emit navigationProgressChanged(nav_progress_);
-    }
-}
-
-double RobotController::calculateDistance(const geometry_msgs::PoseStamped& pose1,
-                                       const geometry_msgs::PoseStamped& pose2)
-{
-    double dx = pose1.pose.position.x - pose2.pose.position.x;
-    double dy = pose1.pose.position.y - pose2.pose.position.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
-
-void RobotController::updateNavigationState(NavigationState state, const QString& status)
-{
-    nav_state_ = state;
-    if (!status.isEmpty()) {
-        nav_status_text_ = status;
-        emit navigationFeedback(status);
-    }
-    emit navigationStateChanged(state);
-    emit statusChanged(nav_status_text_);
-}
-
-bool RobotController::startMapping()
-{
-    if (!is_mapping_) {
-        // 停止导航服务（如果正在运行）
-        if (is_navigating_) {
-            cancelNavigation();
-        }
-
-        // 关闭AMCL（如果正在运行）
-        ros::ServiceClient amcl_client = nh_.serviceClient<std_srvs::Empty>("/global_localization/kill");
-        std_srvs::Empty srv;
-        if (amcl_client.exists()) {
-            amcl_client.call(srv);
-        }
-
-        // 启动SLAM
-        ros::NodeHandle slam_nh;
-        slam_nh.setParam("/slam_gmapping/base_frame", "base_footprint");
-        slam_nh.setParam("/slam_gmapping/odom_frame", "odom");
-        slam_nh.setParam("/slam_gmapping/map_frame", "map");
-
-        // 等待SLAM服务启动
-        ros::service::waitForService("/slam_gmapping/dynamic_map", ros::Duration(5.0));
-        is_mapping_ = true;
-        ROS_INFO("SLAM started successfully");
-        return true;
-    }
-    return false;
-}
-
-bool RobotController::stopMapping()
-{
-    if (is_mapping_) {
-        // 停止SLAM
-        ros::ServiceClient slam_client = nh_.serviceClient<std_srvs::Empty>("/slam_gmapping/stop");
-        std_srvs::Empty srv;
-        if (slam_client.call(srv)) {
-            is_mapping_ = false;
-            ROS_INFO("SLAM stopped successfully");
-            return true;
-        } else {
-            ROS_ERROR("Failed to stop SLAM");
-        }
-    }
-    return false;
-}
-
-bool RobotController::saveMap(const std::string& filename)
-{
-    if (!is_mapping_ && !filename.empty()) {
-        // 使用 map_saver 命令行工具保存地图
-        std::string cmd = "rosrun map_server map_saver -f " + filename;
-        if (system(cmd.c_str()) == 0) {
-            ROS_INFO("Map saved successfully to: %s", filename.c_str());
-            return true;
-        } else {
-            ROS_ERROR("Failed to save map to: %s", filename.c_str());
-        }
-    }
-    return false;
-}
-
-bool RobotController::loadMap(const std::string& filename)
-{
-    if (!filename.empty()) {
-        // 停止SLAM（如果正在运行）
-        if (is_mapping_) {
-            stopMapping();
-        }
-
-        // 关闭当前的map_server（如果有）
-        system("rosnode kill /map_server");
-        ros::Duration(1.0).sleep();  // 等待节点关闭
-
-        // 启动新的map_server
-        std::string cmd = "rosrun map_server map_server " + filename + " __name:=map_server &";
-        if (system(cmd.c_str()) == 0) {
-            // 等待地图加载
-            ros::Duration(2.0).sleep();
-            ROS_INFO("Map loaded successfully from: %s", filename.c_str());
-            return true;
-        }
-        ROS_ERROR("Failed to load map from: %s", filename.c_str());
-    }
-    return false;
-}
-
-bool RobotController::setInitialPose(double x, double y, double theta)
-{
-    geometry_msgs::PoseWithCovarianceStamped pose;
-    pose.header.frame_id = "map";
-    pose.header.stamp = ros::Time::now();
-    
-    pose.pose.pose.position.x = x;
-    pose.pose.pose.position.y = y;
-    pose.pose.pose.position.z = 0.0;
-    
-    // 将偏航角转换为四元数
-    tf2::Quaternion q;
-    q.setRPY(0, 0, theta);
-    pose.pose.pose.orientation.w = q.w();
-    pose.pose.pose.orientation.x = q.x();
-    pose.pose.pose.orientation.y = q.y();
-    pose.pose.pose.orientation.z = q.z();
-
-    // 设置协方差矩阵（表示初始位置的不确定性）
-    for (int i = 0; i < 36; i++) {
-        pose.pose.covariance[i] = 0.0;
-    }
-    pose.pose.covariance[0] = 0.25;  // x方差
-    pose.pose.covariance[7] = 0.25;  // y方差
-    pose.pose.covariance[35] = 0.06853; // theta方差
-    
-    initial_pose_pub_.publish(pose);
-    ROS_INFO("Initial pose set to: x=%.2f, y=%.2f, theta=%.2f", x, y, theta);
-    return true;
-}
-
-bool RobotController::updateCostmap()
-{
-    // 清除代价地图
-    ros::ServiceClient clear_costmaps_client = 
-        nh_.serviceClient<std_srvs::Empty>("/move_base/clear_costmaps");
-    std_srvs::Empty srv;
-    
-    if (clear_costmaps_client.call(srv)) {
-        ROS_INFO("Costmaps cleared successfully");
-        return true;
-    } else {
-        ROS_ERROR("Failed to clear costmaps");
-        return false;
-    }
+    // 订阅机器人状态信息
+    odom_sub_ = nh_.subscribe("/odom", 1, &RobotController::odomCallback, this);
+    battery_sub_ = nh_.subscribe("/battery_state", 1, &RobotController::batteryCallback, this);
+    diagnostics_sub_ = nh_.subscribe("/diagnostics", 1, &RobotController::diagnosticsCallback, this);
+    scan_sub_ = nh_.subscribe("/scan", 1, &RobotController::scanCallback, this);
+    amcl_pose_sub_ = nh_.subscribe("/amcl_pose", 1, &RobotController::amclPoseCallback, this);
+    map_sub_ = nh_.subscribe("/map", 1, &RobotController::mapCallback, this);
 }
 
 void RobotController::publishVelocity(double linear, double angular)
 {
-    // 安全检查：如果ROS连接断开，停止机器人
-    if (!ros::ok()) {
-        ROS_WARN("ROS connection lost, stopping robot");
-        geometry_msgs::Twist cmd_vel;
-        cmd_vel.linear.x = 0.0;
-        cmd_vel.angular.z = 0.0;
-        cmd_vel_pub_.publish(cmd_vel);
-        return;
-    }
-
-    // 安全检查：确保速度在合理范围内
-    linear = std::max(-max_linear_velocity_, std::min(linear, max_linear_velocity_));
-    angular = std::max(-max_angular_velocity_, std::min(angular, max_angular_velocity_));
-
     geometry_msgs::Twist cmd_vel;
     cmd_vel.linear.x = linear;
     cmd_vel.angular.z = angular;
     cmd_vel_pub_.publish(cmd_vel);
-
-    // 记录当前速度状态
-    current_linear_velocity_ = linear;
-    current_angular_velocity_ = angular;
+    
+    // 更新当前速度
+    linear_velocity_ = linear;
+    angular_velocity_ = angular;
+    
+    // 发送速度更新信号
+    emit velocityChanged(linear, angular);
 }
 
-void RobotController::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg)
+void RobotController::setLinearVelocity(double linear)
 {
-    auto map = std::make_shared<nav_msgs::OccupancyGrid>(*msg);
-    emit mapUpdated(map);
+    publishVelocity(linear, angular_velocity_);
+}
+
+void RobotController::setAngularVelocity(double angular)
+{
+    publishVelocity(linear_velocity_, angular);
+}
+
+void RobotController::stop()
+{
+    publishVelocity(0.0, 0.0);
+}
+
+void RobotController::setInitialPose(const geometry_msgs::PoseWithCovarianceStamped& pose)
+{
+    initial_pose_pub_.publish(pose);
+}
+
+void RobotController::startGlobalLocalization()
+{
+    if (!is_localizing_) {
+        std_srvs::Empty srv;
+        if (global_localization_client_.call(srv)) {
+            is_localizing_ = true;
+            localization_progress_ = 0.0;
+            emit localizationStateChanged(true);
+            emit localizationProgressChanged(0.0);
+        }
+    }
+}
+
+void RobotController::cancelGlobalLocalization()
+{
+    if (is_localizing_) {
+        is_localizing_ = false;
+        localization_progress_ = 0.0;
+        emit localizationStateChanged(false);
+        emit localizationProgressChanged(0.0);
+    }
+}
+
+void RobotController::startNavigation()
+{
+    if (!move_base_client_ || !move_base_client_->isServerConnected()) {
+        ROS_WARN("Move base action server not available");
+        return;
+    }
+
+    if (!is_navigating_) {
+        is_navigating_ = true;
+        navigation_progress_ = 0.0;
+        distance_to_goal_ = 0.0;
+        estimated_time_to_goal_ = 0.0;
+        emit navigationStateChanged(true);
+        emit navigationProgressChanged(0.0);
+        emit distanceToGoalChanged(0.0);
+        emit estimatedTimeToGoalChanged(0.0);
+    }
+}
+
+void RobotController::pauseNavigation()
+{
+    if (move_base_client_ && move_base_client_->isServerConnected() && is_navigating_) {
+        move_base_client_->cancelGoal();
+        is_navigating_ = false;
+        emit navigationStateChanged(false);
+    }
+}
+
+void RobotController::stopNavigation()
+{
+    if (move_base_client_ && move_base_client_->isServerConnected()) {
+        move_base_client_->cancelAllGoals();
+        is_navigating_ = false;
+        navigation_progress_ = 0.0;
+        distance_to_goal_ = 0.0;
+        estimated_time_to_goal_ = 0.0;
+        emit navigationStateChanged(false);
+        emit navigationProgressChanged(0.0);
+        emit distanceToGoalChanged(0.0);
+        emit estimatedTimeToGoalChanged(0.0);
+    }
+}
+
+void RobotController::cancelNavigation()
+{
+    stopNavigation();
+}
+
+void RobotController::startMapping()
+{
+    if (!is_mapping_) {
+        is_mapping_ = true;
+        mapping_progress_ = 0.0;
+        emit mappingStateChanged(true);
+        emit mappingProgressChanged(0.0);
+    }
+}
+
+void RobotController::stopMapping()
+{
+    if (is_mapping_) {
+        is_mapping_ = false;
+        mapping_progress_ = 0.0;
+        emit mappingStateChanged(false);
+        emit mappingProgressChanged(0.0);
+    }
+}
+
+void RobotController::saveMap(const QString& filename)
+{
+    // TODO: 实现地图保存功能
+    ROS_INFO("Saving map to file: %s", filename.toStdString().c_str());
+}
+
+void RobotController::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& map)
+{
+    emit mapUpdated(*map);
 }
 
 void RobotController::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
 {
-    auto odom = std::make_shared<nav_msgs::Odometry>(*msg);
-    emit odomUpdated(odom);
+    // 更新机器人位姿和速度
+    current_pose_ = msg->pose.pose;
+    linear_velocity_ = msg->twist.twist.linear.x;
+    angular_velocity_ = msg->twist.twist.angular.z;
+    
+    // 发送速度更新信号
+    emit velocityChanged(linear_velocity_, angular_velocity_);
 }
 
 void RobotController::scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg)
 {
-    auto scan = std::make_shared<sensor_msgs::LaserScan>(*msg);
-    emit scanUpdated(scan);
+    // 更新激光扫描数据
+    current_scan_ = *msg;
+    emit laserScanUpdated(*msg);
 }
 
-void RobotController::setLinearVelocity(double velocity)
+void RobotController::amclPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
 {
-    current_linear_velocity_ = std::max(-max_linear_velocity_, std::min(velocity, max_linear_velocity_));
-    publishVelocity(current_linear_velocity_, current_angular_velocity_);
+    // 更新定位位姿
+    current_amcl_pose_ = msg->pose.pose;
+    emit poseUpdated(msg->pose);
 }
 
-void RobotController::setAngularVelocity(double velocity)
+void RobotController::batteryCallback(const sensor_msgs::BatteryState::ConstPtr& msg)
 {
-    current_angular_velocity_ = std::max(-max_angular_velocity_, std::min(velocity, max_angular_velocity_));
-    publishVelocity(current_linear_velocity_, current_angular_velocity_);
+    // 更新电池状态
+    battery_percentage_ = msg->percentage;
+    battery_voltage_ = msg->voltage;
+    battery_current_ = msg->current;
+    battery_temperature_ = msg->temperature;
+    
+    // 发送电池状态更新信号
+    emit batteryStateChanged(*msg);
 }
 
-void RobotController::setYawTolerance(double tolerance)
+void RobotController::diagnosticsCallback(const diagnostic_msgs::DiagnosticArray::ConstPtr& msg)
 {
-    nh_.setParam("/move_base/DWAPlannerROS/yaw_goal_tolerance", tolerance);
+    // 更新诊断信息
+    for (const auto& status : msg->status) {
+        if (status.name == "motors") {
+            motor_status_ = QString::fromStdString(status.message);
+            emit diagnosticsUpdated(*msg);
+            break;
+        }
+    }
 }
 
-void RobotController::setInflationRadius(double radius)
+void RobotController::setNavigationGoal(const geometry_msgs::PoseStamped& goal)
 {
-    nh_.setParam("/move_base/global_costmap/inflation_layer/inflation_radius", radius);
-    nh_.setParam("/move_base/local_costmap/inflation_layer/inflation_radius", radius);
+    if (!move_base_client_ || !move_base_client_->isServerConnected()) {
+        ROS_WARN("Move base action server not available");
+        return;
+    }
+
+    move_base_msgs::MoveBaseGoal move_base_goal;
+    move_base_goal.target_pose = goal;
+
+    // 设置回调函数
+    move_base_client_->sendGoal(
+        move_base_goal,
+        [this](const actionlib::SimpleClientGoalState& state,
+               const move_base_msgs::MoveBaseResultConstPtr& result) {
+            // 目标完成回调
+            is_navigating_ = false;
+            navigation_progress_ = 1.0;
+            distance_to_goal_ = 0.0;
+            estimated_time_to_goal_ = 0.0;
+            emit navigationStateChanged(false);
+            emit navigationProgressChanged(1.0);
+            emit distanceToGoalChanged(0.0);
+            emit estimatedTimeToGoalChanged(0.0);
+        },
+        [this]() {
+            // 目标激活回调
+            is_navigating_ = true;
+            navigation_progress_ = 0.0;
+            emit navigationStateChanged(true);
+            emit navigationProgressChanged(0.0);
+        },
+        [this](const move_base_msgs::MoveBaseFeedbackConstPtr& feedback) {
+            // 反馈回调
+            if (!is_navigating_) return;
+            
+            // 计算到目标的距离
+            double dx = feedback->base_position.pose.position.x - 
+                       feedback->base_position.pose.position.x;
+            double dy = feedback->base_position.pose.position.y - 
+                       feedback->base_position.pose.position.y;
+            distance_to_goal_ = std::sqrt(dx * dx + dy * dy);
+            
+            // 估计剩余时间（假设平均速度为0.5m/s）
+            estimated_time_to_goal_ = distance_to_goal_ / 0.5;
+            
+            // 更新进度（基于距离）
+            navigation_progress_ = std::max(0.0, std::min(1.0, 1.0 - distance_to_goal_ / 10.0));
+            
+            emit navigationProgressChanged(navigation_progress_);
+            emit distanceToGoalChanged(distance_to_goal_);
+            emit estimatedTimeToGoalChanged(estimated_time_to_goal_);
+        }
+    );
 }
 
-void RobotController::setTransformTolerance(double tolerance)
+void RobotController::loadMap(const QString& filename)
 {
-    nh_.setParam("/move_base/transform_tolerance", tolerance);
+    // TODO: 实现地图加载功能
+    ROS_INFO("Loading map from file: %s", filename.toStdString().c_str());
 }
 
-void RobotController::setPlannerFrequency(double frequency)
+void RobotController::setYawTolerance(double value)
 {
-    nh_.setParam("/move_base/planner_frequency", frequency);
+    yaw_tolerance_ = value;
+    // TODO: 更新 move_base 参数
 }
 
-void RobotController::setControllerFrequency(double frequency)
+void RobotController::setInflationRadius(double value)
 {
-    nh_.setParam("/move_base/controller_frequency", frequency);
+    inflation_radius_ = value;
+    // TODO: 更新 move_base 参数
 }
 
-void RobotController::setGlobalCostmapUpdateFrequency(double frequency)
+void RobotController::setTransformTolerance(double value)
 {
-    nh_.setParam("/move_base/global_costmap/update_frequency", frequency);
+    transform_tolerance_ = value;
+    // TODO: 更新 move_base 参数
 }
 
-void RobotController::setLocalCostmapUpdateFrequency(double frequency)
+void RobotController::setPlannerFrequency(double value)
 {
-    nh_.setParam("/move_base/local_costmap/update_frequency", frequency);
+    planner_frequency_ = value;
+    // TODO: 更新 move_base 参数
 }
 
-void RobotController::setPlannedPathBias(double bias)
+void RobotController::setControllerFrequency(double value)
 {
-    nh_.setParam("/move_base/DWAPlannerROS/path_distance_bias", bias);
+    controller_frequency_ = value;
+    // TODO: 更新 move_base 参数
+}
+
+void RobotController::setGlobalCostmapUpdateFrequency(double value)
+{
+    global_costmap_update_frequency_ = value;
+    // TODO: 更新 move_base 参数
+}
+
+void RobotController::setLocalCostmapUpdateFrequency(double value)
+{
+    local_costmap_update_frequency_ = value;
+    // TODO: 更新 move_base 参数
+}
+
+void RobotController::setPlannedPathBias(double value)
+{
+    planned_path_bias_ = value;
+    // TODO: 更新 move_base 参数
 }
 
 void RobotController::setRecoveryBehaviorEnabled(bool enabled)
 {
-    nh_.setParam("/move_base/recovery_behavior_enabled", enabled);
+    recovery_behavior_enabled_ = enabled;
+    // TODO: 更新 move_base 参数
 }
 
 void RobotController::setClearingRotationAllowed(bool allowed)
 {
-    nh_.setParam("/move_base/clearing_rotation_allowed", allowed);
+    clearing_rotation_allowed_ = allowed;
+    // TODO: 更新 move_base 参数
 }
 
-bool RobotController::setParam(const QString& name, const QString& value)
+void RobotController::setNavigationMode(int mode)
 {
-    try {
-        nh_.setParam(name.toStdString(), value.toStdString());
-        return true;
-    } catch (...) {
-        return false;
-    }
+    navigation_mode_ = mode;
+    // TODO: 根据模式切换导航策略
+    emit navigationModeChanged(mode);
 }
 
-bool RobotController::setParam(const QString& name, double value)
+bool RobotController::testConnection(const std::string& master_uri)
 {
-    try {
-        nh_.setParam(name.toStdString(), value);
-        return true;
-    } catch (...) {
-        return false;
-    }
+    ros::master::V_TopicInfo topic_info;
+    return ros::master::getTopics(topic_info);
 }
 
-bool RobotController::setParam(const QString& name, bool value)
+void RobotController::setMasterURI(const std::string& uri)
 {
-    try {
-        nh_.setParam(name.toStdString(), value);
-        return true;
-    } catch (...) {
-        return false;
-    }
+    // 设置ROS_MASTER_URI环境变量
+    setenv("ROS_MASTER_URI", uri.c_str(), 1);
+    qDebug() << "ROS Master URI set to:" << QString::fromStdString(uri);
 }
 
-bool RobotController::setParam(const QString& name, int value)
+void RobotController::setHostname(const std::string& hostname)
 {
-    try {
-        nh_.setParam(name.toStdString(), value);
-        return true;
-    } catch (...) {
-        return false;
-    }
+    // 设置ROS_HOSTNAME环境变量
+    setenv("ROS_HOSTNAME", hostname.c_str(), 1);
+    qDebug() << "ROS Hostname set to:" << QString::fromStdString(hostname);
 }
 
-double RobotController::getCurrentLinearVelocity() const {
-    return current_linear_velocity_;
+void RobotController::setRobotModel(const std::string& model)
+{
+    // TODO: 根据机器人型号设置相应的参数
+    qDebug() << "Robot model set to:" << QString::fromStdString(model);
 }
 
-double RobotController::getCurrentAngularVelocity() const {
-    return current_angular_velocity_;
+void RobotController::setSerialPort(const std::string& port)
+{
+    // TODO: 配置串口设备
+    qDebug() << "Serial port set to:" << QString::fromStdString(port);
+}
+
+void RobotController::setBaudrate(int baudrate)
+{
+    // TODO: 配置串口波特率
+    qDebug() << "Baudrate set to:" << baudrate;
+}
+
+void RobotController::setMaxLinearVelocity(double max_linear)
+{
+    max_linear_velocity_ = max_linear;
+    qDebug() << "Max linear velocity set to:" << max_linear;
+}
+
+void RobotController::setMaxAngularVelocity(double max_angular)
+{
+    max_angular_velocity_ = max_angular;
+    qDebug() << "Max angular velocity set to:" << max_angular;
 } 

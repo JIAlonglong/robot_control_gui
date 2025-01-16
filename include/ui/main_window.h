@@ -1,113 +1,108 @@
-#ifndef MAIN_WINDOW_H
-#define MAIN_WINDOW_H
+#ifndef ROBOT_CONTROL_GUI_MAIN_WINDOW_H
+#define ROBOT_CONTROL_GUI_MAIN_WINDOW_H
 
 #include <QMainWindow>
+#include <memory>
 #include <QTimer>
-#include <QDockWidget>
-#include <QStatusBar>
+#include <QToolBar>
+#include <QAction>
+#include <QLabel>
 #include <QCheckBox>
+#include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QLabel>
-#include <QGroupBox>
-#include <QRadioButton>
-#include <QPushButton>
+#include <QKeyEvent>
+#include <QDockWidget>
 #include <QStackedWidget>
-#include <QToolBar>
-#include <memory>
-#include <map>
+
 #include <ros/ros.h>
 #include <nav_msgs/Path.h>
-#include "ros/robot_controller.h"
-#include "ui/joystick_widget.h"
-#include "ui/rviz_view.h"
-#include "ui/robot_status_panel.h"
-#include "ui/speed_dashboard.h"
-#include "ui/navigation_panel.h"
-#include "ui/sensor_display/camera_view.h"
+#include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Odometry.h>
+#include <sensor_msgs/LaserScan.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
-class MainWindow : public QMainWindow {
+#include "ros/robot_controller.h"
+#include "ui/navigation_panel.h"
+#include "ui/rviz_view.h"
+#include "ui/speed_dashboard.h"
+#include "ui/control_panel.h"
+#include "ui/settings_panel.h"
+
+class MainWindowPrivate
+{
+public:
+    ros::NodeHandle nh_;
+    QWidget* central_widget_{nullptr};
+    QToolBar* tool_bar_{nullptr};
+    QDockWidget* display_options_dock_{nullptr};
+    QStackedWidget* stacked_widget_{nullptr};
+    std::shared_ptr<SpeedDashboard> speed_dashboard_;
+
+    std::shared_ptr<RobotController> robot_controller_;
+    std::shared_ptr<NavigationPanel> navigation_panel_;
+    std::shared_ptr<ControlPanel> control_panel_;
+    std::shared_ptr<RVizView> rviz_view_;
+    std::shared_ptr<SettingsPanel> settings_panel_;
+
+    ros::Publisher goal_pub_;
+    ros::Subscriber path_sub_;
+    ros::Subscriber map_sub_;
+    ros::Subscriber scan_sub_;
+    ros::Subscriber odom_sub_;
+    ros::Subscriber battery_sub_;
+    ros::Subscriber diagnostics_sub_;
+    ros::Subscriber camera_sub_;
+
+    QMap<int, bool> key_states_;
+    double current_linear_vel_{0.0};
+    double current_angular_vel_{0.0};
+    double max_linear_vel_{0.5};
+    double max_angular_vel_{1.0};
+};
+
+class MainWindow : public QMainWindow
+{
     Q_OBJECT
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
-    ~MainWindow();
+    ~MainWindow() override;
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
 
 private slots:
-    void updateRobotState();
     void onGoalSelected(const geometry_msgs::PoseStamped& goal);
+    void onInitialPoseSelected(const geometry_msgs::PoseWithCovarianceStamped& pose);
     void onDisplayOptionsChanged();
-    void updateKeyboardControl();
-    void handleMapUpdate(const std::shared_ptr<nav_msgs::OccupancyGrid>& map);
-    void handleOdomUpdate(const std::shared_ptr<nav_msgs::Odometry>& odom);
-    void handleScanUpdate(const std::shared_ptr<sensor_msgs::LaserScan>& scan);
-    void onJoystickMoved(double x, double y);
     void onRobotStatusChanged(const QString& status);
-    void switchToPage(int index);
+    void onLinearJoystickMoved(double x, double y);
+    void onAngularJoystickMoved(double x, double y);
 
 private:
     void setupUi();
-    void setupConnections();
-    void setupRosConnections();
-    void createDisplayOptionsPanel();
     void createToolBar();
-    void createPages();
+    void createDisplayOptionsPanel();
     void createFloatingControlPanel();
-
-    // ROS 相关
-    ros::NodeHandle nh_;
-    ros::Publisher goal_pub_;
-    ros::Subscriber path_sub_;
-    ros::Subscriber map_sub_;
-    ros::Subscriber scan_sub_;
-    ros::Subscriber odom_sub_;
-
-    // 回调函数
-    void pathCallback(const nav_msgs::Path::ConstPtr& path);
-    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& map);
-    void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
-    void odomCallback(const nav_msgs::Odometry::ConstPtr& odom);
-
-    // UI 组件
-    QWidget* central_widget_;
-    QStackedWidget* stacked_widget_;
-    QToolBar* tool_bar_;
-    RVizView* rviz_view_;
-    RobotStatusPanel* status_panel_;
-    SpeedDashboard* speed_dashboard_;
-    NavigationPanel* navigation_panel_;
-    JoystickWidget* linear_joystick_;
-    JoystickWidget* angular_joystick_;
-    QDockWidget* display_options_dock_;
-    CameraView* camera_view_;
-
-    // 页面组件
-    QWidget* control_page_;
-    QWidget* navigation_page_;
-    QWidget* sensor_page_;
-    QWidget* mapping_page_;
-
-    // 定时器
-    QTimer* update_timer_;
-    QTimer* keyboard_timer_;
-
-    // 控制器
-    std::shared_ptr<RobotController> robot_controller_;
-
-    // 键盘控制相关
-    double current_linear_vel_ = 0.0;
-    double current_angular_vel_ = 0.0;
-    const double max_linear_vel_ = 0.5;  // 最大线速度 (m/s)
-    const double max_angular_vel_ = 1.0;  // 最大角速度 (rad/s)
-
-    // 按键状态存储
-    std::map<int, bool> key_states_;
-
+    void connectSignals();
+    void setupSubscribers();
+    void setupRosConnections();
+    void updateKeyboardControl();
+    void updateRobotState();
     void updateRobotVelocity();
+
+    void handleMapUpdate(const nav_msgs::OccupancyGridConstPtr& msg);
+    void handleOdomUpdate(const nav_msgs::OdometryConstPtr& msg);
+    void handleScanUpdate(const sensor_msgs::LaserScanConstPtr& msg);
+    void pathCallback(const nav_msgs::PathConstPtr& msg);
+    void mapCallback(const nav_msgs::OccupancyGridConstPtr& msg);
+    void scanCallback(const sensor_msgs::LaserScanConstPtr& msg);
+    void odomCallback(const nav_msgs::OdometryConstPtr& msg);
+
+    std::unique_ptr<MainWindowPrivate> d_;
 };
 
-#endif // MAIN_WINDOW_H 
+#endif // ROBOT_CONTROL_GUI_MAIN_WINDOW_H 

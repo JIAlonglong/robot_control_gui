@@ -25,7 +25,7 @@ public:
     void start();
     void stop();
 
-private slots:
+private Q_SLOTS:
     void onTopicSelected(const QString& topic);
     void onStartStopClicked();
     void updateTopicList();
