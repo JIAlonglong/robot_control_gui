@@ -367,8 +367,8 @@ void SettingsPanel::onApplySettings()
     }
     
     // 应用ROS网络设置
-    d_ptr->robot_controller->setMasterURI(d_ptr->master_uri_edit->text().toStdString());
-    d_ptr->robot_controller->setHostname(d_ptr->hostname_edit->text().toStdString());
+    d_ptr->robot_controller->setMasterURI(d_ptr->master_uri_edit->text());
+    d_ptr->robot_controller->setHostname(d_ptr->hostname_edit->text());
     
     // 应用机器人配置
     d_ptr->robot_controller->setRobotModel(d_ptr->robot_model_combo->currentText().toStdString());

@@ -102,6 +102,9 @@ void MainWindow::setupUi()
     d_->navigation_panel_ = std::make_shared<NavigationPanel>(d_->robot_controller_, d_->stacked_widget_);
     d_->stacked_widget_->addWidget(d_->navigation_panel_.get());
     
+    // 设置RVizView
+    d_->navigation_panel_->setRVizView(d_->rviz_view_);
+    
     // 创建设置面板
     d_->settings_panel_ = std::make_shared<SettingsPanel>(d_->robot_controller_, d_->stacked_widget_);
     d_->stacked_widget_->addWidget(d_->settings_panel_.get());

@@ -16,21 +16,28 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+# 设置Qt5路径
+set(Qt5_DIR "/usr/lib/x86_64-linux-gnu/cmake/Qt5")
+
 # 查找所需的包
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  sensor_msgs
-  nav_msgs
+  std_srvs
   geometry_msgs
+  nav_msgs
+  sensor_msgs
+  diagnostic_msgs
+  move_base_msgs
+  actionlib
+  tf2
+  tf2_ros
+  dynamic_reconfigure
+  interactive_markers
   cv_bridge
   image_transport
   rviz
-  tf2
-  tf2_ros
-  move_base_msgs
-  actionlib
 )
 
 find_package(Qt5 REQUIRED COMPONENTS
@@ -67,9 +74,38 @@ set(OGRE_LIBRARIES
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS roscpp rospy std_msgs sensor_msgs nav_msgs geometry_msgs cv_bridge image_transport rviz tf2 tf2_ros move_base_msgs actionlib
-  DEPENDS Qt5Core Qt5Widgets Qt5Gui Qt5OpenGL Qt5Network Qt5PrintSupport Qt5Multimedia Qt5MultimediaWidgets Qt5SerialPort OpenCV
+  CATKIN_DEPENDS 
+    roscpp 
+    rospy 
+    std_msgs 
+    std_srvs
+    geometry_msgs 
+    nav_msgs 
+    sensor_msgs
+    diagnostic_msgs
+    move_base_msgs
+    actionlib
+    tf2
+    tf2_ros
+    cv_bridge
+    image_transport
+    rviz
+  DEPENDS 
+    Qt5Core 
+    Qt5Widgets 
+    Qt5Gui 
+    Qt5OpenGL 
+    Qt5Network 
+    Qt5PrintSupport 
+    Qt5Multimedia 
+    Qt5MultimediaWidgets 
+    Qt5SerialPort 
+    OpenCV
+    OGRE
 )
+
+# 添加Qt5编译标志
+add_definitions(-DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB)
 
 # 设置包含目录
 include_directories(
@@ -83,8 +119,13 @@ include_directories(
   ${Qt5PrintSupport_INCLUDE_DIRS}
   ${Qt5Multimedia_INCLUDE_DIRS}
   ${Qt5MultimediaWidgets_INCLUDE_DIRS}
+  ${Qt5SerialPort_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${OGRE_INCLUDE_DIRS}
+  /usr/include/x86_64-linux-gnu/qt5
+  /usr/include/x86_64-linux-gnu/qt5/QtWidgets
+  /usr/include/x86_64-linux-gnu/qt5/QtGui
+  /usr/include/x86_64-linux-gnu/qt5/QtCore
 )
 
 # 收集源文件
@@ -133,6 +174,7 @@ target_link_libraries(${PROJECT_NAME}_node
   Qt5::PrintSupport
   Qt5::Multimedia
   Qt5::MultimediaWidgets
+  Qt5::SerialPort
   ${OpenCV_LIBRARIES}
   ${OGRE_LIBRARIES}
 )

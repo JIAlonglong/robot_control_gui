@@ -41,8 +41,26 @@ RVizView::RVizView(QWidget* parent)
     manager_->initialize();
 
     // 设置工具
-    goal_tool_ = manager_->getToolManager()->addTool("rviz/SetGoal");
-    initial_pose_tool_ = manager_->getToolManager()->addTool("rviz/SetInitialPose");
+    auto* tool_manager = manager_->getToolManager();
+    tool_manager->addTool("rviz/MoveCamera");  // 默认工具
+    goal_tool_ = tool_manager->addTool("rviz/SetGoal");
+    initial_pose_tool_ = tool_manager->addTool("rviz/SetInitialPose");
+
+    // 设置默认工具
+    tool_manager->setCurrentTool(tool_manager->getTool(0));  // MoveCamera
+
+    // 直接连接工具的信号
+    if (goal_tool_) {
+        connect(goal_tool_, SIGNAL(positionSelected(const Ogre::Vector3&, const Ogre::Quaternion&)),
+                this, SLOT(onGoalPositionSelected(const Ogre::Vector3&, const Ogre::Quaternion&)));
+        ROS_INFO("Goal tool connected");
+    }
+
+    if (initial_pose_tool_) {
+        connect(initial_pose_tool_, SIGNAL(positionSelected(const Ogre::Vector3&, const Ogre::Quaternion&)),
+                this, SLOT(onInitialPoseSelected(const Ogre::Vector3&, const Ogre::Quaternion&)));
+        ROS_INFO("Initial pose tool connected");
+    }
 
     // 设置显示组件
     setupDisplays();
@@ -96,11 +114,10 @@ void RVizView::setupDisplays()
     }
     // 设置地图显示属性
     map_display_->subProp("Topic")->setValue("/map");
-    map_display_->subProp("Color Scheme")->setValue("map");
+    map_display_->subProp("Color Scheme")->setValue("costmap");
     map_display_->subProp("Draw Behind")->setValue(true);
     map_display_->subProp("Alpha")->setValue(0.7);
     map_display_->subProp("Update Topic")->setValue("/map_updates");
-    map_display_->subProp("Resolution")->setValue(0.05);  // 5cm per pixel
 
     // 创建激光扫描显示
     laser_scan_display_ = manager_->createDisplay("rviz/LaserScan", "LaserScan", true);
@@ -110,29 +127,90 @@ void RVizView::setupDisplays()
     }
     laser_scan_display_->subProp("Topic")->setValue("/scan");
     laser_scan_display_->subProp("Size (m)")->setValue(0.05);
-    laser_scan_display_->subProp("Color")->setValue(QColor(255, 0, 0));
+    laser_scan_display_->subProp("Style")->setValue("Points");
 
-    // 创建路径显示
-    path_display_ = manager_->createDisplay("rviz/Path", "Path", true);
-    if (!path_display_) {
-        ROS_ERROR("Failed to create Path display");
+    // 创建全局路径显示
+    global_path_display_ = manager_->createDisplay("rviz/Path", "Global Path", true);
+    if (!global_path_display_) {
+        ROS_ERROR("Failed to create Global Path display");
         return;
     }
-    path_display_->subProp("Topic")->setValue("/move_base/NavfnROS/plan");
-    path_display_->subProp("Color")->setValue(QColor(0, 0, 255));
+    global_path_display_->subProp("Topic")->setValue("/move_base/GlobalPlanner/plan");
+    global_path_display_->subProp("Color")->setValue(QColor(0, 255, 0));  // 绿色
+    global_path_display_->subProp("Alpha")->setValue(1.0);
+    global_path_display_->subProp("Line Width")->setValue(0.1);
+
+    // 创建局部路径显示
+    local_path_display_ = manager_->createDisplay("rviz/Path", "Local Path", true);
+    if (!local_path_display_) {
+        ROS_ERROR("Failed to create Local Path display");
+        return;
+    }
+    local_path_display_->subProp("Topic")->setValue("/move_base/DWAPlannerROS/local_plan");
+    local_path_display_->subProp("Color")->setValue(QColor(255, 0, 0));  // 红色
+    local_path_display_->subProp("Alpha")->setValue(1.0);
+    local_path_display_->subProp("Line Width")->setValue(0.1);
 
     // 创建目标点显示
-    goal_display_ = manager_->createDisplay("rviz/Pose", "Goal", true);
+    goal_display_ = manager_->createDisplay("rviz/Pose", "Navigation Goal", true);
     if (!goal_display_) {
         ROS_ERROR("Failed to create Goal display");
         return;
+    }
+    goal_display_->subProp("Topic")->setValue("/move_base_simple/goal");
+    goal_display_->subProp("Color")->setValue(QColor(255, 0, 0));  // 红色
+    goal_display_->subProp("Alpha")->setValue(1.0);
+    goal_display_->subProp("Shaft Length")->setValue(1.0);  // 增加箭头长度
+    goal_display_->subProp("Head Length")->setValue(0.5);   // 增加箭头头部长度
+    goal_display_->subProp("Head Radius")->setValue(0.3);   // 增加箭头头部半径
+    goal_display_->subProp("Shaft Radius")->setValue(0.1);  // 增加箭头轴半径
+
+    // 创建当前目标点显示
+    auto* current_goal_display = manager_->createDisplay("rviz/Pose", "Current Goal", true);
+    if (current_goal_display) {
+        current_goal_display->subProp("Topic")->setValue("/move_base/current_goal");
+        current_goal_display->subProp("Color")->setValue(QColor(0, 255, 0));  // 绿色
+        current_goal_display->subProp("Alpha")->setValue(1.0);
+        current_goal_display->subProp("Shaft Length")->setValue(1.0);
+        current_goal_display->subProp("Head Length")->setValue(0.5);
+        current_goal_display->subProp("Head Radius")->setValue(0.3);
+        current_goal_display->subProp("Shaft Radius")->setValue(0.1);
+    }
+
+    // 创建机器人位姿显示
+    auto* robot_pose_display = manager_->createDisplay("rviz/PoseWithCovariance", "Robot Pose", true);
+    if (robot_pose_display) {
+        robot_pose_display->subProp("Topic")->setValue("/amcl_pose");
+        robot_pose_display->subProp("Color")->setValue(QColor(255, 255, 0));  // 黄色
+        robot_pose_display->subProp("Alpha")->setValue(1.0);
+        robot_pose_display->subProp("Shaft Length")->setValue(1.0);
+        robot_pose_display->subProp("Head Length")->setValue(0.3);
+        robot_pose_display->subProp("Covariance")->setValue(true);
+    }
+
+    // 创建全局代价地图显示
+    auto* global_costmap_display = manager_->createDisplay("rviz/Map", "Global Costmap", true);
+    if (global_costmap_display) {
+        global_costmap_display->subProp("Topic")->setValue("/move_base/global_costmap/costmap");
+        global_costmap_display->subProp("Color Scheme")->setValue("raw");
+        global_costmap_display->subProp("Draw Behind")->setValue(false);
+        global_costmap_display->subProp("Alpha")->setValue(0.4);
+    }
+
+    // 创建局部代价地图显示
+    auto* local_costmap_display = manager_->createDisplay("rviz/Map", "Local Costmap", true);
+    if (local_costmap_display) {
+        local_costmap_display->subProp("Topic")->setValue("/move_base/local_costmap/costmap");
+        local_costmap_display->subProp("Color Scheme")->setValue("raw");
+        local_costmap_display->subProp("Draw Behind")->setValue(false);
+        local_costmap_display->subProp("Alpha")->setValue(0.4);
     }
 }
 
 void RVizView::setRobotModel(const QString& model)
 {
     if (robot_model_display_) {
-        robot_model_display_->subProp("Robot Description")->setValue(QVariant(model));
+        robot_model_display_->subProp("Robot Description")->setValue(model);
     }
 }
 
@@ -146,28 +224,33 @@ void RVizView::setFixedFrame(const QString& frame)
 void RVizView::setTargetFrame(const QString& frame)
 {
     if (manager_) {
-        manager_->getFrameManager()->setFixedFrame(frame.toStdString());
+        // 设置目标帧
+        if (robot_model_display_) {
+            robot_model_display_->subProp("Target Frame")->setValue(frame);
+        }
     }
 }
 
 void RVizView::setDisplayEnabled(const QString& display_name, bool enabled)
 {
     rviz::Display* display = nullptr;
-
+    
     if (display_name == "Grid") {
         display = grid_display_;
-    } else if (display_name == "Robot Model") {
+    } else if (display_name == "RobotModel") {
         display = robot_model_display_;
     } else if (display_name == "Map") {
         display = map_display_;
     } else if (display_name == "LaserScan") {
         display = laser_scan_display_;
-    } else if (display_name == "Path") {
-        display = path_display_;
+    } else if (display_name == "GlobalPath") {
+        display = global_path_display_;
+    } else if (display_name == "LocalPath") {
+        display = local_path_display_;
     } else if (display_name == "Goal") {
         display = goal_display_;
     }
-
+    
     if (display) {
         display->setEnabled(enabled);
     }
@@ -177,16 +260,7 @@ void RVizView::updateMap(const nav_msgs::OccupancyGridConstPtr& map)
 {
     QMutexLocker locker(&mutex_);
     if (map_display_) {
-        // 确保地图显示已启用
         map_display_->setEnabled(true);
-        
-        // 检查话题是否正确设置
-        if (map_display_->subProp("Topic")->getValue().toString() != "/map") {
-            map_display_->subProp("Topic")->setValue("/map");
-        }
-        
-        // 强制刷新显示
-        map_display_->reset();
     }
 }
 
@@ -209,27 +283,60 @@ void RVizView::updateLaserScan(const sensor_msgs::LaserScanConstPtr& scan)
 void RVizView::updatePath(const std::vector<geometry_msgs::PoseStamped>& poses)
 {
     QMutexLocker locker(&mutex_);
-    if (path_display_) {
-        path_display_->setEnabled(!poses.empty());
+    if (global_path_display_) {
+        global_path_display_->setEnabled(!poses.empty());
+    }
+    if (local_path_display_) {
+        local_path_display_->setEnabled(!poses.empty());
     }
 }
 
 void RVizView::onGoalToolActivated()
 {
-    if (manager_ && goal_tool_) {
-        manager_->getToolManager()->setCurrentTool(goal_tool_);
+    if (!manager_ || !goal_tool_) {
+        ROS_ERROR("Manager or goal tool not initialized");
+        return;
     }
+
+    auto* tool_manager = manager_->getToolManager();
+    auto* current_tool = tool_manager->getCurrentTool();
+    
+    // 如果当前工具已经是目标点工具，不做任何操作
+    if (current_tool == goal_tool_) {
+        ROS_INFO("Goal tool already active");
+        return;
+    }
+    
+    // 切换到目标点工具
+    tool_manager->setCurrentTool(goal_tool_);
+    ROS_INFO("Goal tool activated");
 }
 
 void RVizView::onInitialPoseToolActivated()
 {
-    if (manager_ && initial_pose_tool_) {
-        manager_->getToolManager()->setCurrentTool(initial_pose_tool_);
+    if (!manager_ || !initial_pose_tool_) {
+        ROS_ERROR("Manager or initial pose tool not initialized");
+        return;
     }
+
+    auto* tool_manager = manager_->getToolManager();
+    auto* current_tool = tool_manager->getCurrentTool();
+    
+    // 如果当前工具已经是初始位姿工具，不做任何操作
+    if (current_tool == initial_pose_tool_) {
+        ROS_INFO("Initial pose tool already active");
+        return;
+    }
+    
+    // 切换到初始位姿工具
+    tool_manager->setCurrentTool(initial_pose_tool_);
+    ROS_INFO("Initial pose tool activated");
 }
 
 void RVizView::onGoalPositionSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
 {
+    ROS_INFO("Goal position selected: x=%.2f, y=%.2f", position.x, position.y);
+    
     geometry_msgs::PoseStamped goal;
     goal.header.frame_id = manager_->getFixedFrame().toStdString();
     goal.header.stamp = ros::Time::now();
@@ -241,17 +348,24 @@ void RVizView::onGoalPositionSelected(const Ogre::Vector3& position, const Ogre:
     goal.pose.orientation.z = orientation.z;
     goal.pose.orientation.w = orientation.w;
 
+    // 确保目标点显示被启用
+    if (goal_display_) {
+        goal_display_->setEnabled(true);
+    }
+
     emit goalSelected(goal);
 }
 
 void RVizView::onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
 {
+    ROS_INFO("Initial pose selected: x=%.2f, y=%.2f", position.x, position.y);
+    
     geometry_msgs::PoseWithCovarianceStamped pose;
-    pose.header.frame_id = manager_->getFixedFrame().toStdString();
+    pose.header.frame_id = "map";  // 使用固定的map坐标系
     pose.header.stamp = ros::Time::now();
     pose.pose.pose.position.x = position.x;
     pose.pose.pose.position.y = position.y;
-    pose.pose.pose.position.z = position.z;
+    pose.pose.pose.position.z = 0.0;  // 设置为0，因为是2D导航
     pose.pose.pose.orientation.x = orientation.x;
     pose.pose.pose.orientation.y = orientation.y;
     pose.pose.pose.orientation.z = orientation.z;
@@ -261,9 +375,10 @@ void RVizView::onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::
     for (int i = 0; i < 36; ++i) {
         pose.pose.covariance[i] = 0.0;
     }
-    pose.pose.covariance[0] = 0.25;  // x
-    pose.pose.covariance[7] = 0.25;  // y
-    pose.pose.covariance[35] = 0.06853891945200942;  // yaw
+    // 设置较小的协方差，表示我们对初始位姿有较高的确信度
+    pose.pose.covariance[0] = 0.1;   // x
+    pose.pose.covariance[7] = 0.1;   // y
+    pose.pose.covariance[35] = 0.1;  // yaw
 
     emit initialPoseSelected(pose);
 }

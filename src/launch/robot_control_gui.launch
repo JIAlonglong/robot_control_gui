@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <launch>
     <!-- 启动turtlebot3 burger仿真 -->
-    <!-- <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/> -->
+    <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_world.launch"/>
     <!-- 启动turtlebot3 burger导航 -->
-    <!-- <include file="$(find turtlebot3_navigation)/launch/turtlebot3_navigation.launch"/> -->
+    <include file="$(find turtlebot3_navigation)/launch/turtlebot3_navigation.launch"/>
     <!-- 启动模拟摄像头 -->
     <node name="image_publisher" pkg="image_publisher" type="image_publisher" args="$(find robot_control_gui)/resources/test_image.png">
         <param name="publish_rate" value="30.0"/>
