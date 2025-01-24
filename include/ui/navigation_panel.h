@@ -35,7 +35,6 @@ private slots:
     void onPauseNavigation();
     void onStopNavigation();
     void onNavigationModeChanged(int index);
-    void startAutoLocalization();
     void onNavigationStateChanged(RobotController::NavigationState state);
     void onLocalizationStateChanged(bool is_localized);
     void onLocalizationProgressChanged(double progress);

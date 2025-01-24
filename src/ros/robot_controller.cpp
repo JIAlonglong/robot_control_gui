@@ -27,9 +27,20 @@
 #include <rviz/visualization_manager.h>
 #include <rviz/tool_manager.h>
 #include <rviz/tool.h>
+#include <visualization_msgs/MarkerArray.h>
+#include <tf/transform_listener.h>
+#include <angles/angles.h>
 
 RobotController::RobotController(QObject* parent)
     : QObject(parent)
+    , nh_()
+    , is_localizing_(false)
+    , is_navigating_(false)
+    , is_mapping_(false)
+    , localization_progress_(0.0)
+    , mapping_progress_(0.0)
+    , yaw_tolerance_(0.1)
+    , auto_localization_radius_(0.15)  // 设置自动定位的运动半径为15厘米
 {
     // 设置发布者和订阅者
     setupPublishers();
@@ -46,6 +57,9 @@ RobotController::RobotController(QObject* parent)
     if (!move_base_client_->waitForServer(ros::Duration(5.0))) {
         ROS_WARN("Move base action server not available");
     }
+    
+    // 初始化可视化标记发布器
+    marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/localization_markers", 1);
     
     // 标记为已初始化
     is_initialized_ = true;
@@ -84,25 +98,32 @@ void RobotController::cleanup()
 
 void RobotController::setupPublishers()
 {
+    // 速度控制发布者
     cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("cmd_vel", 1);
+    
+    // 初始位姿发布者
     initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
-    tool_manager_pub_ = nh_.advertise<std_msgs::String>("/rviz/current_tool", 1);
+    
+    // 全局定位发布者
     global_localization_pub_ = nh_.advertise<std_msgs::Bool>("/global_localization", 1);
+    
+    // 可视化标记发布者
+    marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/localization_markers", 1);
 }
 
 void RobotController::setupSubscribers()
 {
-    // 订阅机器人状态信息
-    odom_sub_ = nh_.subscribe("/odom", 1, &RobotController::odomCallback, this);
-    battery_sub_ = nh_.subscribe("/battery_state", 1, &RobotController::batteryCallback, this);
-    diagnostics_sub_ = nh_.subscribe("/diagnostics", 1, &RobotController::diagnosticsCallback, this);
-    scan_sub_ = nh_.subscribe("/scan", 1, &RobotController::scanCallback, this);
-    amcl_pose_sub_ = nh_.subscribe("/amcl_pose", 1, &RobotController::amclPoseCallback, this);
-    map_sub_ = nh_.subscribe("/map", 1, &RobotController::mapCallback, this);
+    // 里程计数据订阅者
+    odom_sub_ = nh_.subscribe("odom", 1, &RobotController::odomCallback, this);
     
-    // 订阅RViz的交互反馈
-    initial_pose_sub_ = nh_.subscribe("/initialpose", 1, &RobotController::initialPoseCallback, this);
-    goal_sub_ = nh_.subscribe("/move_base_simple/goal", 1, &RobotController::goalCallback, this);
+    // AMCL位姿订阅者
+    amcl_pose_sub_ = nh_.subscribe("amcl_pose", 1, &RobotController::amclPoseCallback, this);
+    
+    // 激光扫描数据订阅者
+    scan_sub_ = nh_.subscribe("scan", 1, &RobotController::laserScanCallback, this);
+    
+    // 地图数据订阅者
+    map_sub_ = nh_.subscribe("map", 1, &RobotController::mapCallback, this);
 }
 
 void RobotController::publishVelocity(double linear, double angular)
@@ -224,7 +245,7 @@ void RobotController::startNavigation()
                  current_goal_.pose.position.x,
                  current_goal_.pose.position.y);
         setNavigationGoal(current_goal_);
-    } else {
+        } else {
         ROS_ERROR("No navigation goal set");
         emit navigationStatusChanged("请先设置导航目标点！");
     }
@@ -324,12 +345,9 @@ void RobotController::scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg)
 
 void RobotController::amclPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
 {
-    // 更新当前位姿
     current_amcl_pose_ = *msg;
-    current_pose_ = msg->pose.pose;
-    
-    // 更新协方差
-    for (size_t i = 0; i < 36; ++i) {
+    // 保存协方差数据用于监控定位质量
+    for(int i = 0; i < 36; i++) {
         current_pose_cov_[i] = msg->pose.covariance[i];
     }
     
@@ -640,76 +658,120 @@ void RobotController::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& m
 
 void RobotController::startAutoLocalization()
 {
+    ROS_INFO("Starting auto localization...");
+    emit localizationStatusChanged("正在启动自动定位...");
+    
+    if (!is_initialized_) {
+        ROS_ERROR("RobotController not initialized!");
+        emit localizationStatusChanged("错误：RobotController未初始化！");
+        return;
+    }
+
     if (is_navigating_) {
         ROS_INFO("Canceling navigation before starting auto localization");
+        emit localizationStatusChanged("正在取消导航...");
         stopNavigation();
         ros::Duration(0.5).sleep();
     }
     
+    is_localizing_ = true;
     localization_progress_ = 0.0;
     
+    // 清除代价地图
     std_srvs::Empty srv;
     if (!clear_costmaps_client_.call(srv)) {
         ROS_WARN("Failed to clear costmaps");
+        emit localizationStatusChanged("警告：清除代价地图失败");
+    } else {
+        emit localizationStatusChanged("已清除代价地图");
     }
     
-    std_msgs::Bool global_loc_msg;
-    global_loc_msg.data = true;
-    global_localization_pub_.publish(global_loc_msg);
-
-    // 使用dynamic_reconfigure服务来设置参数
+    // 触发全局定位
+    std_srvs::Empty global_loc_srv;
+    if (global_localization_client_.call(global_loc_srv)) {
+        ROS_INFO("Global localization triggered");
+        emit localizationStatusChanged("已触发全局定位，正在分散粒子...");
+    } else {
+        ROS_WARN("Failed to trigger global localization");
+        emit localizationStatusChanged("警告：触发全局定位失败");
+    }
+    
+    // 获取机器人当前位置作为自动定位的中心点
+    try {
+        tf::StampedTransform transform;
+        ROS_INFO("Looking up transform from map to base_footprint");
+        emit localizationStatusChanged("正在获取机器人当前位置...");
+        
+        tf_listener_.lookupTransform("map", "base_footprint", ros::Time(0), transform);
+        localization_center_.x = transform.getOrigin().x();
+        localization_center_.y = transform.getOrigin().y();
+        localization_center_.z = 0.0;
+        
+        QString center_msg = QString("已设置定位中心点: (%1, %2)")
+            .arg(localization_center_.x, 0, 'f', 3)
+            .arg(localization_center_.y, 0, 'f', 3);
+        emit localizationStatusChanged(center_msg);
+        
+        ROS_INFO("Got robot position: x=%.2f, y=%.2f", localization_center_.x, localization_center_.y);
+    } catch (tf::TransformException& ex) {
+        ROS_WARN("Failed to get robot position: %s", ex.what());
+        // 如果无法获取位置，使用(0,0)作为中心点
+        localization_center_.x = 0.0;
+        localization_center_.y = 0.0;
+        localization_center_.z = 0.0;
+        emit localizationStatusChanged("警告：无法获取机器人位置，使用(0,0)作为中心点");
+    }
+    
+    // 发布可视化标记
+    ROS_INFO("Publishing visualization markers");
+    emit localizationStatusChanged("正在显示定位范围标记...");
+    publishLocalizationMarkers();
+    
+    // 设置AMCL参数
+    ROS_INFO("Setting AMCL parameters");
     dynamic_reconfigure::ReconfigureRequest srv_req;
     dynamic_reconfigure::ReconfigureResponse srv_resp;
     dynamic_reconfigure::Config conf;
-
+    
     // 设置整数参数
     dynamic_reconfigure::IntParameter int_param;
     int_param.name = "min_particles";
-    int_param.value = 5000;
+    int_param.value = 10000;  // 增加最小粒子数
     conf.ints.push_back(int_param);
-
+    
     int_param.name = "max_particles";
-    int_param.value = 10000;
+    int_param.value = 20000;  // 增加最大粒子数
     conf.ints.push_back(int_param);
-
-    int_param.name = "resample_interval";
-    int_param.value = 1;
-    conf.ints.push_back(int_param);
-
+    
     // 设置浮点数参数
     dynamic_reconfigure::DoubleParameter double_param;
     double_param.name = "update_min_d";
-    double_param.value = 0.1;
+    double_param.value = 0.05;  // 降低更新阈值以获得更频繁的更新
     conf.doubles.push_back(double_param);
-
+    
     double_param.name = "update_min_a";
-    double_param.value = 0.1;
+    double_param.value = 0.1;   // 降低角度更新阈值
     conf.doubles.push_back(double_param);
-
-    double_param.name = "kld_err";
-    double_param.value = 0.01;
-    conf.doubles.push_back(double_param);
-
-    double_param.name = "kld_z";
-    double_param.value = 0.99;
-    conf.doubles.push_back(double_param);
-
-    double_param.name = "recovery_alpha_slow";
-    double_param.value = 0.001;
-    conf.doubles.push_back(double_param);
-
+    
     double_param.name = "recovery_alpha_fast";
     double_param.value = 0.1;
     conf.doubles.push_back(double_param);
-
+    
     srv_req.config = conf;
-
+    
     if (!ros::service::call("/amcl/set_parameters", srv_req, srv_resp)) {
         ROS_WARN("Failed to set AMCL parameters");
     }
-
+    
+    // 初始化运动参数
+    current_rotation_speed_ = 0.3;  // 初始旋转速度
+    current_linear_speed_ = 0.0;    // 初始线速度
+    last_direction_change_ = ros::Time::now();
+    
+    // 启动定位监控定时器
+    ROS_INFO("Starting localization monitor timer");
     localization_monitor_timer_ = nh_.createTimer(
-        ros::Duration(0.5), 
+        ros::Duration(0.1),  // 提高更新频率到10Hz 
         &RobotController::monitorLocalization,
         this
     );
@@ -717,7 +779,7 @@ void RobotController::startAutoLocalization()
     emit localizationProgressChanged(0.0);
     emit localizationStatusChanged("开始自动定位...");
     
-    ROS_INFO("Auto localization started");
+    ROS_INFO("Auto localization started successfully");
 }
 
 void RobotController::monitorLocalization(const ros::TimerEvent&)
@@ -728,9 +790,107 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
             current_pose_cov_[0] + current_pose_cov_[7];  // x和y方向的方差之和
         double orientation_variance = current_pose_cov_[35]; // yaw方向的方差
         
+        // 获取当前机器人位置
+        tf::StampedTransform transform;
+        try {
+            tf_listener_.lookupTransform("map", "base_footprint", ros::Time(0), transform);
+            
+            // 计算到中心点的距离
+            double dx = transform.getOrigin().x() - localization_center_.x;
+            double dy = transform.getOrigin().y() - localization_center_.y;
+            double distance = sqrt(dx*dx + dy*dy);
+            
+            // 如果检测到障碍物，执行避让
+            if (is_obstacle_detected_) {
+                // 根据激光扫描数据选择避让方向
+                if (left_space_larger_) {
+                    // 左侧空间更大，向左转
+                    current_rotation_speed_ = 0.3;
+                    current_linear_speed_ = 0.0;
+                    emit localizationStatusChanged("正在向左避让障碍物...");
+                } else {
+                    // 右侧空间更大，向右转
+                    current_rotation_speed_ = -0.3;
+                    current_linear_speed_ = 0.0;
+                    emit localizationStatusChanged("正在向右避让障碍物...");
+                }
+            }
+            // 如果没有障碍物，执行正常的定位运动
+            else {
+                // 根据距离调整速度
+                if (distance > auto_localization_radius_ * 0.9) {
+                    // 接近边界时减速并转向中心
+                    double angle_to_center = atan2(-dy, -dx);
+                    double current_yaw = tf::getYaw(transform.getRotation());
+                    double angle_diff = angles::shortest_angular_distance(current_yaw, angle_to_center);
+                    
+                    // 如果面向中心，向前移动；否则原地旋转
+                    if (fabs(angle_diff) < 0.3) {
+                        current_rotation_speed_ = 0.0;
+                        current_linear_speed_ = 0.05;  // 降低线速度为5cm/s
+                        emit localizationStatusChanged("正在向中心移动...");
+                    } else {
+                        current_rotation_speed_ = (angle_diff > 0) ? 0.2 : -0.2;  // 降低旋转速度
+                        current_linear_speed_ = 0.0;
+                        emit localizationStatusChanged("正在转向中心点...");
+                    }
+                }
+            }
+            
+            // 发布速度命令
+            publishVelocity(current_linear_speed_, current_rotation_speed_);
+            
+        } catch (tf::TransformException& ex) {
+            ROS_WARN_THROTTLE(1.0, "Failed to get robot position: %s", ex.what());
+            // 发生错误时停止运动
+            publishVelocity(0.0, 0.0);
+            emit localizationStatusChanged("无法获取机器人位置，请检查TF转换...");
+        }
+        
         // 如果方差小于阈值,认为定位成功
         if (position_variance < 0.1 && orientation_variance < 0.1) {
             localization_monitor_timer_.stop();
+            
+            // 停止机器人运动
+            publishVelocity(0.0, 0.0);
+            
+            // 将当前AMCL位姿设置为初始位姿
+            geometry_msgs::PoseWithCovarianceStamped initial_pose;
+            initial_pose.header.frame_id = "map";
+            initial_pose.header.stamp = ros::Time::now();
+            initial_pose.pose = current_amcl_pose_.pose;
+            
+            // 设置协方差
+            for (int i = 0; i < 36; ++i) {
+                initial_pose.pose.covariance[i] = 0.0;
+            }
+            initial_pose.pose.covariance[0] = 0.25;   // x
+            initial_pose.pose.covariance[7] = 0.25;   // y
+            initial_pose.pose.covariance[35] = 0.068; // yaw
+            
+            // 多次发布初始位姿以确保设置成功
+            for(int i = 0; i < 3; i++) {
+                initial_pose_pub_.publish(initial_pose);
+                ros::Duration(0.1).sleep();  // 等待0.1秒
+            }
+            ROS_INFO("Published initial pose multiple times after successful localization");
+            
+            // 多次清除代价地图以确保完全重置
+            std_srvs::Empty srv;
+            for(int i = 0; i < 2; i++) {
+                if (clear_costmaps_client_.call(srv)) {
+                    ROS_INFO("Costmaps cleared after successful localization (attempt %d)", i+1);
+                }
+                ros::Duration(0.1).sleep();
+            }
+            
+            // 计算最终位置和朝向
+            double final_yaw = tf2::getYaw(initial_pose.pose.pose.orientation) * 180.0 / M_PI;
+            QString result_msg = QString("定位成功！最终位置: (%1, %2) 朝向: %3°")
+                .arg(initial_pose.pose.pose.position.x, 0, 'f', 3)
+                .arg(initial_pose.pose.pose.position.y, 0, 'f', 3)
+                .arg(final_yaw, 0, 'f', 1);
+            emit localizationStatusChanged(result_msg);
             
             // 恢复正常的AMCL参数
             dynamic_reconfigure::ReconfigureRequest srv_req;
@@ -760,11 +920,21 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
             srv_req.config = conf;
             ros::service::call("/amcl/set_parameters", srv_req, srv_resp);
             
-            // 清除代价地图
-            std_srvs::Empty srv;
-            if (clear_costmaps_client_.call(srv)) {
-                ROS_INFO("Costmaps cleared after successful localization");
-            }
+            // 清除可视化标记
+            visualization_msgs::MarkerArray marker_array;
+            visualization_msgs::Marker delete_marker;
+            delete_marker.header.frame_id = "map";
+            delete_marker.header.stamp = ros::Time::now();
+            delete_marker.ns = "localization_boundary";
+            delete_marker.id = 0;
+            delete_marker.action = visualization_msgs::Marker::DELETE;
+            marker_array.markers.push_back(delete_marker);
+            
+            delete_marker.ns = "localization_center";
+            delete_marker.id = 1;
+            marker_array.markers.push_back(delete_marker);
+            
+            marker_pub_.publish(marker_array);
             
             emit localizationProgressChanged(100.0);
             emit localizationStatusChanged("定位成功");
@@ -789,36 +959,71 @@ void RobotController::setupSafety()
         "scan", 1, &RobotController::laserScanCallback, this);
         
     // 设置安全参数
-    safety_distance_ = 0.5;  // 安全距离阈值(米)
+    safety_distance_ = 0.2;  // 安全距离阈值(20厘米)
     is_obstacle_detected_ = false;
 }
 
 void RobotController::laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
 {
+    if (!is_localizing_) return;  // 只在自动定位时进行障碍物检测
+
     // 检查前方180度范围内是否有障碍物
     int start_index = scan->ranges.size() / 4;  // 左侧45度
     int end_index = scan->ranges.size() * 3 / 4;  // 右侧45度
     
-    bool obstacle_detected = false;
+    // 计算左右两侧的平均距离
+    float left_avg_dist = 0.0f;
+    float right_avg_dist = 0.0f;
+    int left_count = 0;
+    int right_count = 0;
+    
+    // 计算中间区域的最小距离
+    float min_front_dist = scan->range_max;
+    int mid_start = scan->ranges.size() * 3 / 8;  // 前方左侧22.5度
+    int mid_end = scan->ranges.size() * 5 / 8;    // 前方右侧22.5度
+    
+    // 统计左右两侧和前方的距离
     for (int i = start_index; i < end_index; i++) {
-        if (scan->ranges[i] < safety_distance_ && 
-            scan->ranges[i] > scan->range_min) {
-            obstacle_detected = true;
-            break;
+        if (scan->ranges[i] > scan->range_min && scan->ranges[i] < scan->range_max) {
+            if (i < mid_start) {  // 左侧区域
+                left_avg_dist += scan->ranges[i];
+                left_count++;
+            } else if (i > mid_end) {  // 右侧区域
+                right_avg_dist += scan->ranges[i];
+                right_count++;
+            } else {  // 前方区域
+                min_front_dist = std::min(min_front_dist, scan->ranges[i]);
+            }
         }
     }
     
-    if (obstacle_detected != is_obstacle_detected_) {
-        is_obstacle_detected_ = obstacle_detected;
-        if (obstacle_detected) {
-            // 发现障碍物时停止运动
-            geometry_msgs::Twist cmd_vel;
-            cmd_vel.linear.x = 0;
-            cmd_vel.angular.z = 0;
-            cmd_vel_pub_.publish(cmd_vel);
-            
-            emit localizationStatusChanged("检测到障碍物,已停止运动");
+    // 计算平均值
+    if (left_count > 0) left_avg_dist /= left_count;
+    if (right_count > 0) right_avg_dist /= right_count;
+    
+    // 更新避让方向标志
+    left_space_larger_ = (left_avg_dist > right_avg_dist);
+    
+    // 如果前方距离小于安全距离，标记为检测到障碍物
+    if (min_front_dist < static_cast<float>(safety_distance_)) {
+        bool was_obstacle_detected = is_obstacle_detected_;
+        is_obstacle_detected_ = true;
+        
+        // 只在状态改变或每2秒输出一次日志
+        if (!was_obstacle_detected) {
+            ROS_INFO("Obstacle detected at distance %.2f m, will turn %s", 
+                     min_front_dist, 
+                     left_space_larger_ ? "left" : "right");
+        } else {
+            ROS_INFO_THROTTLE(2.0, "Obstacle detected at distance %.2f m, will turn %s", 
+                     min_front_dist, 
+                     left_space_larger_ ? "left" : "right");
         }
+    } else {
+        if (is_obstacle_detected_) {
+            ROS_INFO("Obstacle cleared");
+        }
+        is_obstacle_detected_ = false;
     }
 }
 
@@ -973,4 +1178,61 @@ std::vector<QString> RobotController::getAvailableLocalPlanners() const
         "teb_local_planner/TebLocalPlannerROS",       // TEB时间弹性带规划器，适合动态环境
         "eband_local_planner/EBandPlannerROS"         // 弹性带规划器，路径更平滑
     };
+}
+
+void RobotController::publishLocalizationMarkers()
+{
+    visualization_msgs::MarkerArray marker_array;
+    
+    // 创建圆形边界标记
+    visualization_msgs::Marker circle_marker;
+    circle_marker.header.frame_id = "map";
+    circle_marker.header.stamp = ros::Time::now();
+    circle_marker.ns = "localization_boundary";
+    circle_marker.id = 0;
+    circle_marker.type = visualization_msgs::Marker::CYLINDER;
+    circle_marker.action = visualization_msgs::Marker::ADD;
+    
+    // 设置圆柱体位置和大小
+    circle_marker.pose.position = localization_center_;
+    circle_marker.pose.position.z = 0.01;  // 稍微抬高一点以避免与地图重叠
+    circle_marker.pose.orientation.w = 1.0;
+    circle_marker.scale.x = auto_localization_radius_ * 2;
+    circle_marker.scale.y = auto_localization_radius_ * 2;
+    circle_marker.scale.z = 0.02;
+    
+    // 设置颜色(半透明蓝色)
+    circle_marker.color.r = 0.0;
+    circle_marker.color.g = 0.5;
+    circle_marker.color.b = 1.0;
+    circle_marker.color.a = 0.3;
+    
+    marker_array.markers.push_back(circle_marker);
+    
+    // 创建中心点标记
+    visualization_msgs::Marker center_marker;
+    center_marker.header = circle_marker.header;
+    center_marker.ns = "localization_center";
+    center_marker.id = 1;
+    center_marker.type = visualization_msgs::Marker::SPHERE;
+    center_marker.action = visualization_msgs::Marker::ADD;
+    
+    // 设置球体位置和大小
+    center_marker.pose.position = localization_center_;
+    center_marker.pose.position.z = 0.05;
+    center_marker.pose.orientation.w = 1.0;
+    center_marker.scale.x = 0.1;
+    center_marker.scale.y = 0.1;
+    center_marker.scale.z = 0.1;
+    
+    // 设置颜色(红色)
+    center_marker.color.r = 1.0;
+    center_marker.color.g = 0.0;
+    center_marker.color.b = 0.0;
+    center_marker.color.a = 1.0;
+    
+    marker_array.markers.push_back(center_marker);
+    
+    // 发布标记
+    marker_pub_.publish(marker_array);
 } 

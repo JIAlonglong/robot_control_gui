@@ -1,163 +1,267 @@
-# 路径规划功能开发指南
+# 路径规划技术文档
 
-## 功能概述
+## 1. 概述
 
-路径规划模块提供了多种路径规划算法的选择和参数配置功能，支持以下特性：
+本文档描述了机器人控制系统中的路径规划模块，包括全局路径规划和局部路径规划的实现细节。
 
-1. 多种规划算法选择：
-   - Dijkstra算法：基于图搜索的最短路径算法
-   - A*算法：启发式搜索算法，支持多种启发函数
-   - RRT算法：快速随机树算法，适用于高维空间
-   - RRT*算法：RRT的优化版本，提供渐进最优解
+## 2. 全局路径规划
 
-2. 启发式函数选择（用于A*算法）：
-   - 欧几里得距离：直线距离
-   - 曼哈顿距离：网格距离
-   - 对角线距离：考虑对角线移动的距离
+### 2.1 Dijkstra算法
 
-3. 规划参数配置：
-   - 规划时间限制：设置路径规划的最大允许时间
-   - 路径插值距离：设置路径点之间的最小距离
-   - 未知区域处理：是否允许规划穿过未知区域
-   - 可视化选项：是否显示规划过程
+用于在全局地图中找到从起点到目标点的最短路径。
 
-## 使用说明
+#### 2.1.1 算法描述
 
-1. 选择规划算法：
-   - 在"规划器"下拉菜单中选择所需的算法
-   - 不同算法适用于不同场景：
-     * Dijkstra：适用于需要找到最短路径的场景
-     * A*：适用于需要快速找到较优路径的场景
-     * RRT：适用于复杂环境中的路径规划
-     * RRT*：适用于需要优化路径质量的场景
-
-2. 配置启发式函数（仅A*算法）：
-   - 欧几里得距离：适用于机器人可以全向移动的场景
-   - 曼哈顿距离：适用于机器人只能沿正交方向移动的场景
-   - 对角线距离：适用于机器人可以斜向移动的场景
-
-3. 调整规划参数：
-   - 规划时间限制：根据实际需求设置，通常5秒足够
-   - 路径插值距离：较小的值会生成更平滑的路径，但计算量更大
-   - 未知区域：根据实际场景决定是否允许穿过未知区域
-   - 可视化：调试时建议开启，生产环境可以关闭以提高性能
-
-## 开发指南
-
-### 添加新的规划算法
-
-1. 在`navigation_panel.h`中添加新的算法选项：
 ```cpp
-planner_type_->addItem(tr("新算法名称"), "new_planner_name");
+function dijkstra(graph, start, goal):
+    dist[start] = 0
+    for each vertex v in graph:
+        if v ≠ start: dist[v] = ∞
+        prev[v] = undefined
+        Q.add_with_priority(v, dist[v])
+    
+    while Q is not empty:
+        u = Q.extract_min()
+        if u = goal: break
+        for each neighbor v of u:
+            alt = dist[u] + length(u, v)
+            if alt < dist[v]:
+                dist[v] = alt
+                prev[v] = u
+                Q.decrease_priority(v, alt)
+    return dist, prev
 ```
 
-2. 在move_base配置文件中添加新的规划器插件：
+### 2.2 A*算法
+
+结合启发式信息的改进版Dijkstra算法。
+
+#### 2.2.1 启发函数
+
+```cpp
+h(n) = w1 * euclidean_distance(n, goal) + 
+       w2 * manhattan_distance(n, goal) +
+       w3 * obstacle_cost(n)
+```
+
+#### 2.2.2 代价函数
+
+```cpp
+f(n) = g(n) + h(n)
+```
+
+其中：
+- g(n)：从起点到节点n的实际代价
+- h(n)：从节点n到目标点的估计代价
+
+## 3. 局部路径规划
+
+### 3.1 DWA算法
+
+动态窗口法（Dynamic Window Approach）用于实时避障和路径优化。
+
+#### 3.1.1 速度采样空间
+
+```cpp
+Vs = { (v,w) | v ∈ [v_min, v_max], w ∈ [w_min, w_max] }
+```
+
+#### 3.1.2 评价函数
+
+```cpp
+G(v,w) = α * heading(v,w) + 
+         β * dist(v,w) + 
+         γ * velocity(v,w)
+```
+
+其中：
+- heading：航向得分
+- dist：障碍物距离得分
+- velocity：速度得分
+- α,β,γ：权重系数
+
+### 3.2 TEB算法
+
+时间弹性带（Timed Elastic Band）算法用于轨迹优化。
+
+#### 3.2.1 优化目标
+
+```
+minimize J = Σ (w_k * c_k(x))
+```
+
+其中：
+- c_k：约束函数
+- w_k：权重
+- x：轨迹参数
+
+#### 3.2.2 约束条件
+
+1. 运动学约束：
+   ```
+   v ≤ v_max
+   |w| ≤ w_max
+   |a| ≤ a_max
+   ```
+
+2. 动力学约束：
+   ```
+   |dv/dt| ≤ a_max
+   |dw/dt| ≤ ε_max
+   ```
+
+## 4. 参数配置
+
+### 4.1 全局规划参数
+
 ```yaml
-base_global_planner: new_planner_name/NewPlannerROS
+global_planner:
+  # Dijkstra参数
+  dijkstra:
+    allow_unknown: false
+    default_tolerance: 0.0
+    visualize_potential: false
+    use_quadratic: true
+    use_grid_path: false
+    
+  # A*参数
+  astar:
+    allow_unknown: false
+    heuristic_factor: 0.5
+    weight_factor: 2.0
+    search_factor: 2.0
 ```
 
-3. 实现新的规划器插件：
-```cpp
-#include <nav_core/base_global_planner.h>
+### 4.2 局部规划参数
 
-namespace new_planner_name {
-class NewPlannerROS : public nav_core::BaseGlobalPlanner {
-public:
-    void initialize(std::string name, costmap_2d::Costmap2DROS* costmap_ros);
-    bool makePlan(const geometry_msgs::PoseStamped& start,
-                 const geometry_msgs::PoseStamped& goal,
-                 std::vector<geometry_msgs::PoseStamped>& plan);
-};
-}
+```yaml
+local_planner:
+  # DWA参数
+  dwa:
+    max_vel_x: 0.5
+    min_vel_x: 0.0
+    max_vel_theta: 1.0
+    min_vel_theta: -1.0
+    acc_lim_x: 2.5
+    acc_lim_theta: 3.2
+    
+  # TEB参数
+  teb:
+    max_vel_x: 0.4
+    max_vel_x_backwards: 0.2
+    max_vel_theta: 0.3
+    acc_lim_x: 0.5
+    acc_lim_theta: 0.5
 ```
 
-### 添加新的启发式函数
+## 5. 性能优化
 
-1. 在`navigation_panel.h`中添加新的启发式函数选项：
-```cpp
-heuristic_type_->addItem(tr("新启发式函数"), "new_heuristic");
-```
+### 5.1 计算优化
 
-2. 在规划器配置中实现新的启发式函数：
-```cpp
-double calculateHeuristic(const Node& current, const Node& goal) {
-    // 实现新的启发式函数
-}
-```
+1. 使用多线程并行计算
+2. 采用查找表加速距离计算
+3. 实现增量式更新机制
 
-### 添加新的参数配置
+### 5.2 内存优化
 
-1. 在UI中添加新的参数控件：
-```cpp
-QLineEdit* new_param_ = new QLineEdit(default_value);
-params_layout->addWidget(new QLabel(tr("新参数:")));
-params_layout->addWidget(new_param_);
-```
+1. 使用智能指针管理内存
+2. 实现节点池复用机制
+3. 采用稀疏图表示
 
-2. 添加参数变更处理：
-```cpp
-connect(new_param_, &QLineEdit::textChanged,
-        this, &NavigationPanel::onNewParamChanged);
-```
+## 6. 调试方法
 
-3. 实现参数更新函数：
-```cpp
-void NavigationPanel::onNewParamChanged(const QString& text) {
-    robot_controller_->setParam("/move_base/new_param", text.toDouble());
-}
-```
+### 6.1 可视化工具
 
-## 调试建议
+1. 路径可视化：
+   ```cpp
+   void visualizePath(const std::vector<Point>& path) {
+       nav_msgs::Path msg;
+       msg.header.frame_id = "map";
+       msg.header.stamp = ros::Time::now();
+       
+       for(const auto& p : path) {
+           geometry_msgs::PoseStamped pose;
+           pose.pose.position.x = p.x;
+           pose.pose.position.y = p.y;
+           msg.poses.push_back(pose);
+       }
+       path_pub_.publish(msg);
+   }
+   ```
 
-1. 使用RViz可视化工具：
-   - 显示全局规划路径：添加Path显示，话题为 `/move_base/GlobalPlanner/plan`
-   - 显示局部规划路径：添加Path显示，话题为 `/move_base/LocalPlanner/local_plan`
-   - 显示代价地图：添加Map显示，话题为 `/move_base/global_costmap/costmap`
+2. 代价地图可视化：
+   ```cpp
+   void visualizeCostmap(const Costmap2D& costmap) {
+       nav_msgs::OccupancyGrid msg;
+       msg.header.frame_id = "map";
+       msg.info.resolution = costmap.getResolution();
+       msg.info.width = costmap.getSizeInCellsX();
+       msg.info.height = costmap.getSizeInCellsY();
+       
+       for(unsigned int i = 0; i < costmap.getSizeInCellsX() * costmap.getSizeInCellsY(); i++) {
+           msg.data.push_back(costmap.getCost(i));
+       }
+       costmap_pub_.publish(msg);
+   }
+   ```
 
-2. 使用rqt_reconfigure动态调整参数：
-   - 运行 `rosrun rqt_reconfigure rqt_reconfigure`
-   - 选择 `/move_base` 节点
-   - 实时调整参数并观察效果
+### 6.2 性能分析
 
-3. 使用rosbag记录和回放：
-   - 记录规划数据：`rosbag record /move_base/*`
-   - 回放数据：`rosbag play planning_data.bag`
+1. 时间统计：
+   ```cpp
+   void benchmarkPlanner() {
+       auto start = std::chrono::high_resolution_clock::now();
+       planner.computePath(start, goal);
+       auto end = std::chrono::high_resolution_clock::now();
+       
+       std::chrono::duration<double> diff = end - start;
+       ROS_INFO("Path planning took %f seconds", diff.count());
+   }
+   ```
 
-## 常见问题
+2. 内存监控：
+   ```cpp
+   void memoryUsage() {
+       struct rusage usage;
+       getrusage(RUSAGE_SELF, &usage);
+       ROS_INFO("Memory usage: %ld KB", usage.ru_maxrss);
+   }
+   ```
 
-1. 规划失败：
-   - 检查代价地图更新是否正常
-   - 确认起点和目标点是否在可行区域内
-   - 调整规划时间限制
+## 7. 常见问题
 
-2. 路径不平滑：
-   - 减小路径插值距离
-   - 调整局部规划器参数
-   - 考虑使用平滑后处理器
+### 7.1 路径规划失败
 
-3. 规划过慢：
-   - 增大路径插值距离
-   - 减小规划区域范围
-   - 关闭可视化选项
+1. 检查地图数据完整性
+2. 验证起点和终点的有效性
+3. 调整规划参数
+4. 检查障碍物膨胀半径
 
-4. 穿越障碍物：
-   - 检查障碍物膨胀参数
-   - 调整代价地图更新频率
-   - 确认传感器数据是否正常
+### 7.2 路径不平滑
 
-## 性能优化
+1. 增加平滑处理：
+   ```cpp
+   void smoothPath(std::vector<Point>& path) {
+       for(int i = 1; i < path.size()-1; i++) {
+           path[i].x = 0.25*path[i-1].x + 0.5*path[i].x + 0.25*path[i+1].x;
+           path[i].y = 0.25*path[i-1].y + 0.5*path[i].y + 0.25*path[i+1].y;
+       }
+   }
+   ```
 
-1. 参数调优：
-   - 根据实际场景调整规划时间限制
-   - 选择合适的路径插值距离
-   - 在不需要时关闭可视化
+2. 调整TEB参数：
+   ```yaml
+   teb_local_planner:
+     optimization_activate: true
+     optimization_verbose: false
+     weight_kinematics_forward_drive: 1.0
+     weight_kinematics_turning_radius: 1.0
+     weight_optimaltime: 1.0
+     weight_obstacle: 50.0
+   ```
 
-2. 算法选择：
-   - 简单环境：使用A*算法
-   - 复杂环境：使用RRT*算法
-   - 高速导航：使用简化的Dijkstra算法
+## 8. 参考文献
 
-3. 代码优化：
-   - 使用多线程处理规划请求
-   - 实现缓存机制
-   - 优化代价地图更新策略 
+1. LaValle, S. M. "Planning Algorithms"
+2. Thrun, S. et al. "Probabilistic Robotics"
+3. Fox, D. et al. "The Dynamic Window Approach to Collision Avoidance" 

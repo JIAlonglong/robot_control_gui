@@ -46,8 +46,8 @@ MainWindow::MainWindow(QWidget* parent)
 {
     // 初始化ROS节点
     if (!ros::isInitialized()) {
-        throw std::runtime_error("ROS节点未初始化");
-    }
+            throw std::runtime_error("ROS节点未初始化");
+        }
 
     // 创建机器人控制器
     d_->robot_controller_ = std::make_shared<RobotController>();
@@ -62,7 +62,7 @@ MainWindow::MainWindow(QWidget* parent)
     // 设置UI
     setupUi();
     setupSubscribers();
-    setupRosConnections();
+        setupRosConnections();
 }
 
 MainWindow::~MainWindow()
@@ -77,11 +77,11 @@ void MainWindow::setupUi()
     // 设置窗口属性
     setWindowTitle(tr("机器人控制界面"));
     setMinimumSize(1024, 768);
-    
+
     // 创建中央部件
     d_->central_widget_ = new QWidget(this);
     setCentralWidget(d_->central_widget_);
-    
+
     // 创建主布局
     auto* main_layout = new QHBoxLayout(d_->central_widget_);
     main_layout->setContentsMargins(0, 0, 0, 0);
@@ -275,7 +275,7 @@ void MainWindow::createDisplayOptionsPanel()
     laser_box->setObjectName("laser_box");
     path_box->setObjectName("path_box");
     goal_box->setObjectName("goal_box");
-
+    
     // 连接信号
     connect(grid_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
     connect(map_box, &QCheckBox::toggled, this, &MainWindow::onDisplayOptionsChanged);
@@ -577,6 +577,6 @@ void MainWindow::odomCallback(const nav_msgs::OdometryConstPtr& msg)
 void MainWindow::onRobotStatusChanged(const QString& status)
 {
     if (statusBar()) {
-        statusBar()->showMessage(status);
+    statusBar()->showMessage(status);
     }
 } 

@@ -21,6 +21,7 @@
 #include <interactive_markers/interactive_marker_server.h>
 #include <visualization_msgs/InteractiveMarker.h>
 #include <visualization_msgs/InteractiveMarkerControl.h>
+#include <tf/transform_listener.h>
 
 class RobotController : public QObject {
     Q_OBJECT
@@ -198,7 +199,7 @@ private:
     bool is_localizing_{false};
     bool is_obstacle_detected_{false};
 
-    double safety_distance_{0.5};
+    double safety_distance_{0.3};
     double current_linear_velocity_{0.0};
     double current_angular_velocity_{0.0};
     double max_linear_velocity_{1.0};
@@ -235,6 +236,21 @@ private:
 
     QString current_global_planner_{"navfn/NavfnROS"};
     QString current_local_planner_{"base_local_planner/TrajectoryPlannerROS"};
+
+    // TF相关
+    tf::TransformListener tf_listener_;
+    
+    // 自动定位相关
+    void publishLocalizationMarkers();
+    ros::Publisher marker_pub_;
+    double auto_localization_radius_;
+    geometry_msgs::Point localization_center_;
+    double current_rotation_speed_;
+    double current_linear_speed_;
+    ros::Time last_direction_change_;
+
+    // 安全相关
+    bool left_space_larger_{true};
 };
 
 #endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H 

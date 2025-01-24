@@ -170,35 +170,39 @@ void NavigationPanel::setupKeyboardControl()
 void NavigationPanel::connectSignalsAndSlots()
 {
     if (!d_ptr->robot_controller) {
-        qDebug() << "Robot controller not initialized!";
+        ROS_ERROR("Robot controller not initialized");
         return;
     }
-    
-    // Connect navigation control buttons
-    connect(d_ptr->start_navigation_button, &QPushButton::clicked, this, &NavigationPanel::onStartNavigation);
-    connect(d_ptr->pause_navigation_button, &QPushButton::clicked, this, &NavigationPanel::onPauseNavigation);
-    connect(d_ptr->stop_navigation_button, &QPushButton::clicked, this, &NavigationPanel::onStopNavigation);
-    connect(d_ptr->emergency_stop_button, &QPushButton::clicked, this, &NavigationPanel::onEmergencyStop);
 
-    // Connect robot controller signals
+    // 连接按钮点击事件
+    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onSetInitialPose);
+    connect(d_ptr->auto_localization_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onAutoLocalization);
+    connect(d_ptr->set_goal_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onSetGoal);
+    connect(d_ptr->cancel_goal_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onCancelGoal);
+    connect(d_ptr->start_navigation_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onStartNavigation);
+    connect(d_ptr->pause_navigation_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onPauseNavigation);
+    connect(d_ptr->stop_navigation_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onStopNavigation);
+    connect(d_ptr->emergency_stop_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onEmergencyStop);
+    connect(d_ptr->planner_settings_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onPlannerSettings);
+            
+    // 连接RobotController的信号
     connect(d_ptr->robot_controller.get(), &RobotController::localizationStateChanged,
             this, &NavigationPanel::onLocalizationStateChanged);
     connect(d_ptr->robot_controller.get(), &RobotController::localizationProgressChanged,
             this, &NavigationPanel::onLocalizationProgressChanged);
+    connect(d_ptr->robot_controller.get(), &RobotController::localizationStatusChanged,
+            this, &NavigationPanel::updateLocalizationStatus);
     connect(d_ptr->robot_controller.get(), &RobotController::navigationStateChanged,
             this, &NavigationPanel::onNavigationStateChanged);
-    connect(d_ptr->robot_controller.get(), &RobotController::navigationProgressChanged,
-            this, &NavigationPanel::onNavigationProgressChanged);
-    connect(d_ptr->robot_controller.get(), &RobotController::distanceToGoalChanged,
-            this, &NavigationPanel::onDistanceToGoalChanged);
-    connect(d_ptr->robot_controller.get(), &RobotController::estimatedTimeToGoalChanged,
-            this, &NavigationPanel::onEstimatedTimeToGoalChanged);
-    connect(d_ptr->robot_controller.get(), &RobotController::velocityChanged,
-            this, &NavigationPanel::updateVelocityDisplay);
-
-    // Connect planner settings button
-    connect(d_ptr->planner_settings_button, &QPushButton::clicked, 
-            this, &NavigationPanel::onPlannerSettings);
 }
 
 void NavigationPanel::onSetInitialPose()
@@ -221,7 +225,10 @@ void NavigationPanel::onSetInitialPose()
 
 void NavigationPanel::onAutoLocalization()
 {
-    if (!d_ptr->robot_controller) return;
+    if (!d_ptr->robot_controller) {
+        ROS_ERROR("Robot controller not initialized");
+        return;
+    }
 
     if (!d_ptr->is_localizing_) {
         // 开始自动定位
@@ -230,54 +237,14 @@ void NavigationPanel::onAutoLocalization()
         updateLocalizationStatus("正在进行自动定位...");
         
         // 启动定位过程
-        startAutoLocalization();
+        d_ptr->robot_controller->startAutoLocalization();
     } else {
         // 停止自动定位
         d_ptr->is_localizing_ = false;
         d_ptr->auto_localization_button->setText("自动定位");
-        if (d_ptr->localization_timer) {
-            d_ptr->localization_timer->stop();
-        }
         d_ptr->robot_controller->publishVelocity(0.0, 0.0);
         updateLocalizationStatus("自动定位已停止");
     }
-}
-
-void NavigationPanel::startAutoLocalization()
-{
-    if (!d_ptr->localization_timer) {
-        d_ptr->localization_timer = new QTimer(this);
-        connect(d_ptr->localization_timer, &QTimer::timeout, this, [this]() {
-            if (!d_ptr->is_localizing_) return;
-            
-            static int phase = 0;
-            static int count = 0;
-            const int PHASE_DURATION = 30; // 每个阶段持续3秒
-            
-            // 分阶段进行定位
-            switch (phase) {
-                case 0: // 原地旋转
-                    d_ptr->robot_controller->publishVelocity(0.0, 0.5);
-                    break;
-                case 1: // 前进一小段
-                    d_ptr->robot_controller->publishVelocity(0.1, 0.0);
-                    break;
-                case 2: // 反向旋转
-                    d_ptr->robot_controller->publishVelocity(0.0, -0.5);
-                    break;
-                case 3: // 后退一小段
-                    d_ptr->robot_controller->publishVelocity(-0.1, 0.0);
-                    break;
-            }
-            
-            count++;
-            if (count >= PHASE_DURATION) {
-                count = 0;
-                phase = (phase + 1) % 4;
-            }
-        });
-    }
-    d_ptr->localization_timer->start(100);  // 100ms interval
 }
 
 void NavigationPanel::onSetGoal()
@@ -286,7 +253,7 @@ void NavigationPanel::onSetGoal()
         ROS_ERROR("Robot controller or RViz view not initialized");
         return;
     }
-
+    
     // 启用目标点设置模式
     d_ptr->robot_controller->enableGoalSetting(true);
     
