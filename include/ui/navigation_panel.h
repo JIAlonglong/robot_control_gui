@@ -1,8 +1,8 @@
-#ifndef ROBOT_CONTROL_GUI_NAVIGATION_PANEL_H
-#define ROBOT_CONTROL_GUI_NAVIGATION_PANEL_H
+#pragma once
 
 #include <QWidget>
 #include <memory>
+#include <map>
 #include "ros/robot_controller.h"
 
 class QLabel;
@@ -46,6 +46,7 @@ private slots:
     void updateVelocityDisplay(double linear, double angular);
     void onEmergencyStop();
     void onJoystickMoved();
+    void onPlannerSettings();
 
 private:
     void setupUi();
@@ -64,6 +65,4 @@ signals:
     void localizationStateChanged(bool is_localized);
     void localizationStatusChanged(const QString& status);
     void localizationProgressChanged(double progress);
-};
-
-#endif // ROBOT_CONTROL_GUI_NAVIGATION_PANEL_H 
+}; 

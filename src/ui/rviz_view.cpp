@@ -5,6 +5,7 @@
 #include <QPaintEvent>
 #include <QTimer>
 #include <QVariant>
+#include <QThread>
 
 #include <rviz/display.h>
 #include <rviz/tool.h>
@@ -42,24 +43,31 @@ RVizView::RVizView(QWidget* parent)
 
     // 设置工具
     auto* tool_manager = manager_->getToolManager();
-    tool_manager->addTool("rviz/MoveCamera");  // 默认工具
+    auto* move_camera_tool = tool_manager->addTool("rviz/MoveCamera");
     goal_tool_ = tool_manager->addTool("rviz/SetGoal");
     initial_pose_tool_ = tool_manager->addTool("rviz/SetInitialPose");
 
     // 设置默认工具
-    tool_manager->setCurrentTool(tool_manager->getTool(0));  // MoveCamera
+    if (move_camera_tool) {
+        tool_manager->setCurrentTool(move_camera_tool);
+        ROS_INFO("Set default tool to MoveCamera");
+    }
 
-    // 直接连接工具的信号
+    // 连接工具信号
     if (goal_tool_) {
         connect(goal_tool_, SIGNAL(positionSelected(const Ogre::Vector3&, const Ogre::Quaternion&)),
                 this, SLOT(onGoalPositionSelected(const Ogre::Vector3&, const Ogre::Quaternion&)));
         ROS_INFO("Goal tool connected");
+    } else {
+        ROS_ERROR("Failed to create goal tool");
     }
 
     if (initial_pose_tool_) {
         connect(initial_pose_tool_, SIGNAL(positionSelected(const Ogre::Vector3&, const Ogre::Quaternion&)),
                 this, SLOT(onInitialPoseSelected(const Ogre::Vector3&, const Ogre::Quaternion&)));
         ROS_INFO("Initial pose tool connected");
+    } else {
+        ROS_ERROR("Failed to create initial pose tool");
     }
 
     // 设置显示组件
@@ -293,41 +301,51 @@ void RVizView::updatePath(const std::vector<geometry_msgs::PoseStamped>& poses)
 
 void RVizView::onGoalToolActivated()
 {
-    if (!manager_ || !goal_tool_) {
-        ROS_ERROR("Manager or goal tool not initialized");
+    if (!manager_) {
+        ROS_ERROR("Visualization manager not initialized");
         return;
     }
 
     auto* tool_manager = manager_->getToolManager();
-    auto* current_tool = tool_manager->getCurrentTool();
-    
-    // 如果当前工具已经是目标点工具，不做任何操作
-    if (current_tool == goal_tool_) {
-        ROS_INFO("Goal tool already active");
+    if (!tool_manager) {
+        ROS_ERROR("Tool manager is null");
         return;
     }
+
+    // 查找或创建目标点工具
+    rviz::Tool* goal_tool = nullptr;
+    for (int i = 0; i < tool_manager->numTools(); i++) {
+        if (tool_manager->getTool(i)->getClassId() == "rviz/SetGoal") {
+            goal_tool = tool_manager->getTool(i);
+            break;
+        }
+    }
     
-    // 切换到目标点工具
-    tool_manager->setCurrentTool(goal_tool_);
-    ROS_INFO("Goal tool activated");
+    if (!goal_tool) {
+        goal_tool = tool_manager->addTool("rviz/SetGoal");
+    }
+
+    if (goal_tool) {
+        tool_manager->setCurrentTool(goal_tool);
+        ROS_INFO("Goal tool activated");
+    } else {
+        ROS_ERROR("Failed to activate goal tool");
+    }
 }
 
 void RVizView::onInitialPoseToolActivated()
 {
     if (!manager_ || !initial_pose_tool_) {
-        ROS_ERROR("Manager or initial pose tool not initialized");
+        ROS_ERROR("Tool manager or initial pose tool not initialized");
         return;
     }
 
     auto* tool_manager = manager_->getToolManager();
-    auto* current_tool = tool_manager->getCurrentTool();
-    
-    // 如果当前工具已经是初始位姿工具，不做任何操作
-    if (current_tool == initial_pose_tool_) {
-        ROS_INFO("Initial pose tool already active");
+    if (!tool_manager) {
+        ROS_ERROR("Tool manager is null");
         return;
     }
-    
+
     // 切换到初始位姿工具
     tool_manager->setCurrentTool(initial_pose_tool_);
     ROS_INFO("Initial pose tool activated");
@@ -348,12 +366,33 @@ void RVizView::onGoalPositionSelected(const Ogre::Vector3& position, const Ogre:
     goal.pose.orientation.z = orientation.z;
     goal.pose.orientation.w = orientation.w;
 
-    // 确保目标点显示被启用
     if (goal_display_) {
         goal_display_->setEnabled(true);
     }
 
     emit goalSelected(goal);
+    ROS_INFO("Goal selected and emitted");
+
+    // 切换回移动相机工具
+    if (manager_ && manager_->getToolManager()) {
+        auto* tool_manager = manager_->getToolManager();
+        // 查找已存在的移动相机工具
+        rviz::Tool* move_camera_tool = nullptr;
+        for (int i = 0; i < tool_manager->numTools(); i++) {
+            if (tool_manager->getTool(i)->getClassId() == "rviz/MoveCamera") {
+                move_camera_tool = tool_manager->getTool(i);
+                break;
+            }
+        }
+        // 如果没找到，才创建新的
+        if (!move_camera_tool) {
+            move_camera_tool = tool_manager->addTool("rviz/MoveCamera");
+        }
+        if (move_camera_tool) {
+            tool_manager->setCurrentTool(move_camera_tool);
+            ROS_INFO("Switched back to MoveCamera tool after goal selection");
+        }
+    }
 }
 
 void RVizView::onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
@@ -361,26 +400,48 @@ void RVizView::onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::
     ROS_INFO("Initial pose selected: x=%.2f, y=%.2f", position.x, position.y);
     
     geometry_msgs::PoseWithCovarianceStamped pose;
-    pose.header.frame_id = "map";  // 使用固定的map坐标系
+    pose.header.frame_id = "map";
     pose.header.stamp = ros::Time::now();
     pose.pose.pose.position.x = position.x;
     pose.pose.pose.position.y = position.y;
-    pose.pose.pose.position.z = 0.0;  // 设置为0，因为是2D导航
+    pose.pose.pose.position.z = 0.0;
     pose.pose.pose.orientation.x = orientation.x;
     pose.pose.pose.orientation.y = orientation.y;
     pose.pose.pose.orientation.z = orientation.z;
     pose.pose.pose.orientation.w = orientation.w;
 
-    // 设置协方差矩阵
+    // 设置协方差
     for (int i = 0; i < 36; ++i) {
         pose.pose.covariance[i] = 0.0;
     }
-    // 设置较小的协方差，表示我们对初始位姿有较高的确信度
-    pose.pose.covariance[0] = 0.1;   // x
-    pose.pose.covariance[7] = 0.1;   // y
-    pose.pose.covariance[35] = 0.1;  // yaw
+    pose.pose.covariance[0] = 0.25;   // x
+    pose.pose.covariance[7] = 0.25;   // y
+    pose.pose.covariance[35] = 0.068; // yaw
 
+    // 发送初始位姿
     emit initialPoseSelected(pose);
+    ROS_INFO("Initial pose emitted");
+
+    // 切换回移动相机工具
+    if (manager_ && manager_->getToolManager()) {
+        auto* tool_manager = manager_->getToolManager();
+        // 查找已存在的移动相机工具
+        rviz::Tool* move_camera_tool = nullptr;
+        for (int i = 0; i < tool_manager->numTools(); i++) {
+            if (tool_manager->getTool(i)->getClassId() == "rviz/MoveCamera") {
+                move_camera_tool = tool_manager->getTool(i);
+                break;
+            }
+        }
+        // 如果没找到，才创建新的
+        if (!move_camera_tool) {
+            move_camera_tool = tool_manager->addTool("rviz/MoveCamera");
+        }
+        if (move_camera_tool) {
+            tool_manager->setCurrentTool(move_camera_tool);
+            ROS_INFO("Switched back to MoveCamera tool");
+        }
+    }
 }
 
 void RVizView::paintEvent(QPaintEvent* event)

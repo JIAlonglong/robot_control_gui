@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <vector>
 #include <memory>
 #include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -25,17 +26,22 @@ class RobotController : public QObject {
     Q_OBJECT
 public:
     enum class NavigationState {
-        NAVIGATING,
+        IDLE,
+        ACTIVE,
         PAUSED,
         STOPPED,
         CANCELLED,
         SUCCEEDED,
-        ABORTED,
-        REJECTED,
-        PREEMPTED,
         FAILED
     };
     Q_ENUM(NavigationState)
+
+    enum class InteractionMode {
+        NONE,
+        SET_INITIAL_POSE,
+        SET_GOAL
+    };
+    Q_ENUM(InteractionMode)
 
     explicit RobotController(QObject* parent = nullptr);
     ~RobotController() override;
@@ -105,6 +111,13 @@ public:
     double getCurrentLinearVelocity() const { return linear_velocity_; }
     double getCurrentAngularVelocity() const { return angular_velocity_; }
 
+    void setGlobalPlanner(const QString& planner_name);
+    void setLocalPlanner(const QString& planner_name);
+    std::vector<QString> getAvailableGlobalPlanners() const;
+    std::vector<QString> getAvailableLocalPlanners() const;
+    QString getCurrentGlobalPlanner() const { return current_global_planner_; }
+    QString getCurrentLocalPlanner() const { return current_local_planner_; }
+
 signals:
     void velocityChanged(double linear, double angular);
     void batteryStateChanged(const sensor_msgs::BatteryState& state);
@@ -124,6 +137,8 @@ signals:
     void laserScanUpdated(const sensor_msgs::LaserScan& scan);
     void diagnosticsUpdated(const diagnostic_msgs::DiagnosticArray& array);
     void goalDisplayEnabled(bool enabled);
+    void globalPlannerChanged(const QString& planner_name);
+    void localPlannerChanged(const QString& planner_name);
 
 private:
     void cleanup();
@@ -132,7 +147,6 @@ private:
     void setupSafety();
     void monitorLocalization(const ros::TimerEvent&);
 
-    // 回调函数声明
     void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
     void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
     void amclPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
@@ -143,7 +157,6 @@ private:
     void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
     void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
     
-    // 导航回调函数声明
     void navigationDoneCallback(const actionlib::SimpleClientGoalState& state,
                               const move_base_msgs::MoveBaseResultConstPtr& result);
     void navigationActiveCallback();
@@ -206,7 +219,6 @@ private:
     double localization_progress_{0.0};
     double mapping_progress_{0.0};
 
-    // Navigation parameters
     double yaw_tolerance_{0.1};
     double inflation_radius_{0.3};
     double transform_tolerance_{0.2};
@@ -219,12 +231,10 @@ private:
     bool clearing_rotation_allowed_{true};
     int navigation_mode_{0};
     
-    // 当前交互模式
-    enum class InteractionMode {
-        NONE,
-        SET_INITIAL_POSE,
-        SET_GOAL
-    } interaction_mode_{InteractionMode::NONE};
+    RobotController::InteractionMode interaction_mode_{RobotController::InteractionMode::NONE};
+
+    QString current_global_planner_{"navfn/NavfnROS"};
+    QString current_local_planner_{"base_local_planner/TrajectoryPlannerROS"};
 };
 
 #endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H 

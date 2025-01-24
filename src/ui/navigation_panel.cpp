@@ -4,8 +4,9 @@
  */
 
 #include "ui/navigation_panel.h"
-#include "ros/robot_controller.h"
 #include "ui/rviz_view.h"
+#include "ui/planner_settings_dialog.h"
+#include "ros/robot_controller.h"
 #include <QWidget>
 #include <QGroupBox>
 #include <QVBoxLayout>
@@ -17,6 +18,7 @@
 #include <QTimer>
 #include <QDebug>
 #include <QString>
+#include <QMetaObject>
 
 class NavigationPanel::NavigationPanelPrivate {
 public:
@@ -30,6 +32,7 @@ public:
     QPushButton* auto_localization_button{nullptr};
     QPushButton* set_goal_button{nullptr};
     QPushButton* cancel_goal_button{nullptr};
+    QPushButton* planner_settings_button{nullptr};
 
     // Navigation control
     QPushButton* start_navigation_button{nullptr};
@@ -94,11 +97,14 @@ void NavigationPanel::setupUi()
     d_ptr->auto_localization_button = new QPushButton("自动定位", this);
     d_ptr->set_goal_button = new QPushButton("设置目标点", this);
     d_ptr->cancel_goal_button = new QPushButton("取消目标点", this);
+    d_ptr->planner_settings_button = new QPushButton("规划器设置", this);
+    d_ptr->planner_settings_button->setToolTip("设置全局和局部路径规划器");
     
     tools_layout->addWidget(d_ptr->set_initial_pose_button);
     tools_layout->addWidget(d_ptr->auto_localization_button);
     tools_layout->addWidget(d_ptr->set_goal_button);
     tools_layout->addWidget(d_ptr->cancel_goal_button);
+    tools_layout->addWidget(d_ptr->planner_settings_button);
     
     main_layout->addWidget(tools_group);
 
@@ -168,12 +174,6 @@ void NavigationPanel::connectSignalsAndSlots()
         return;
     }
     
-    // Connect navigation tool buttons
-    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked, this, &NavigationPanel::onSetInitialPose);
-    connect(d_ptr->auto_localization_button, &QPushButton::clicked, this, &NavigationPanel::onAutoLocalization);
-    connect(d_ptr->set_goal_button, &QPushButton::clicked, this, &NavigationPanel::onSetGoal);
-    connect(d_ptr->cancel_goal_button, &QPushButton::clicked, this, &NavigationPanel::onCancelGoal);
-
     // Connect navigation control buttons
     connect(d_ptr->start_navigation_button, &QPushButton::clicked, this, &NavigationPanel::onStartNavigation);
     connect(d_ptr->pause_navigation_button, &QPushButton::clicked, this, &NavigationPanel::onPauseNavigation);
@@ -195,15 +195,28 @@ void NavigationPanel::connectSignalsAndSlots()
             this, &NavigationPanel::onEstimatedTimeToGoalChanged);
     connect(d_ptr->robot_controller.get(), &RobotController::velocityChanged,
             this, &NavigationPanel::updateVelocityDisplay);
+
+    // Connect planner settings button
+    connect(d_ptr->planner_settings_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onPlannerSettings);
 }
 
 void NavigationPanel::onSetInitialPose()
 {
-    if (d_ptr->robot_controller) {
-        d_ptr->robot_controller->enableInitialPoseSetting(true);
-        d_ptr->set_initial_pose_button->setEnabled(false);
-        updateLocalizationStatus("请在地图上点击设置初始位姿...");
+    if (!d_ptr->robot_controller || !d_ptr->rviz_view) {
+        ROS_ERROR("Robot controller or RViz view not initialized");
+        return;
     }
+
+    // 启用初始位姿设置模式
+    d_ptr->robot_controller->enableInitialPoseSetting(true);
+    
+    // 激活RViz中的初始位姿工具
+    d_ptr->rviz_view->onInitialPoseToolActivated();
+    
+    // 更新UI状态
+    updateLocalizationStatus("请在地图上点击设置初始位姿...");
+    ROS_INFO("Initial pose setting mode activated");
 }
 
 void NavigationPanel::onAutoLocalization()
@@ -269,11 +282,18 @@ void NavigationPanel::startAutoLocalization()
 
 void NavigationPanel::onSetGoal()
 {
-    if (d_ptr->robot_controller) {
-        d_ptr->robot_controller->enableGoalSetting(true);
-        d_ptr->set_goal_button->setEnabled(false);
-        d_ptr->navigation_status_label->setText("请在地图上点击设置目标点...");
+    if (!d_ptr->robot_controller || !d_ptr->rviz_view) {
+        ROS_ERROR("Robot controller or RViz view not initialized");
+        return;
     }
+
+    // 启用目标点设置模式
+    d_ptr->robot_controller->enableGoalSetting(true);
+    
+    // 激活RViz中的目标点工具
+    d_ptr->rviz_view->onGoalToolActivated();
+    
+    ROS_INFO("Goal setting mode activated");
 }
 
 void NavigationPanel::onCancelGoal()
@@ -307,13 +327,22 @@ void NavigationPanel::onStopNavigation()
 void NavigationPanel::onNavigationStateChanged(RobotController::NavigationState state)
 {
     switch (state) {
-        case RobotController::NavigationState::NAVIGATING:
-            d_ptr->navigation_status_label->setText("导航状态: 导航中...");
+        case RobotController::NavigationState::IDLE:
+            d_ptr->navigation_status_label->setText("导航状态: 空闲");
+            d_ptr->start_navigation_button->setEnabled(true);
+            d_ptr->pause_navigation_button->setEnabled(false);
+            d_ptr->stop_navigation_button->setEnabled(false);
+            d_ptr->set_goal_button->setEnabled(true);
+            break;
+            
+        case RobotController::NavigationState::ACTIVE:
+            d_ptr->navigation_status_label->setText("导航状态: 导航中");
             d_ptr->start_navigation_button->setEnabled(false);
             d_ptr->pause_navigation_button->setEnabled(true);
             d_ptr->stop_navigation_button->setEnabled(true);
             d_ptr->set_goal_button->setEnabled(false);
             break;
+            
         case RobotController::NavigationState::PAUSED:
             d_ptr->navigation_status_label->setText("导航状态: 已暂停");
             d_ptr->start_navigation_button->setEnabled(true);
@@ -321,6 +350,7 @@ void NavigationPanel::onNavigationStateChanged(RobotController::NavigationState 
             d_ptr->stop_navigation_button->setEnabled(true);
             d_ptr->set_goal_button->setEnabled(true);
             break;
+            
         case RobotController::NavigationState::STOPPED:
             d_ptr->navigation_status_label->setText("导航状态: 已停止");
             d_ptr->start_navigation_button->setEnabled(true);
@@ -328,21 +358,29 @@ void NavigationPanel::onNavigationStateChanged(RobotController::NavigationState 
             d_ptr->stop_navigation_button->setEnabled(false);
             d_ptr->set_goal_button->setEnabled(true);
             break;
+            
+        case RobotController::NavigationState::CANCELLED:
+            d_ptr->navigation_status_label->setText("导航状态: 已取消");
+            d_ptr->start_navigation_button->setEnabled(true);
+            d_ptr->pause_navigation_button->setEnabled(false);
+            d_ptr->stop_navigation_button->setEnabled(false);
+            d_ptr->set_goal_button->setEnabled(true);
+            break;
+            
         case RobotController::NavigationState::SUCCEEDED:
-            d_ptr->navigation_status_label->setText("导航状态: 已到达目标点");
+            d_ptr->navigation_status_label->setText("导航状态: 已完成");
             d_ptr->start_navigation_button->setEnabled(false);
             d_ptr->pause_navigation_button->setEnabled(false);
             d_ptr->stop_navigation_button->setEnabled(false);
             d_ptr->set_goal_button->setEnabled(true);
             break;
+            
         case RobotController::NavigationState::FAILED:
-            d_ptr->navigation_status_label->setText("导航状态: 导航失败");
+            d_ptr->navigation_status_label->setText("导航状态: 失败");
             d_ptr->start_navigation_button->setEnabled(false);
             d_ptr->pause_navigation_button->setEnabled(false);
             d_ptr->stop_navigation_button->setEnabled(false);
             d_ptr->set_goal_button->setEnabled(true);
-            break;
-        default:
             break;
     }
 }
@@ -559,37 +597,38 @@ void NavigationPanel::setRVizView(const std::shared_ptr<RVizView>& rviz_view)
     // 保存RVizView指针
     d_ptr->rviz_view = rviz_view;
     
-    // 连接工具切换信号
-    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked, 
-            [this, rviz_view]() {
-                if (d_ptr->robot_controller) {
-                    d_ptr->robot_controller->enableInitialPoseSetting(true);
-                    rviz_view->onInitialPoseToolActivated();
-                }
-            });
-            
-    connect(d_ptr->set_goal_button, &QPushButton::clicked, 
-            [this, rviz_view]() {
-                if (d_ptr->robot_controller) {
-                    d_ptr->robot_controller->enableGoalSetting(true);
-                    rviz_view->onGoalToolActivated();
-                }
-            });
+    // 连接初始位姿按钮点击信号
+    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked, this, &NavigationPanel::onSetInitialPose);
+    
+    // 连接目标点按钮点击信号
+    connect(d_ptr->set_goal_button, &QPushButton::clicked, this, &NavigationPanel::onSetGoal);
     
     // 连接位姿选择信号
     connect(rviz_view.get(), &RVizView::initialPoseSelected, 
             [this](const geometry_msgs::PoseWithCovarianceStamped& pose) {
                 if (d_ptr->robot_controller) {
-                    d_ptr->robot_controller->enableInitialPoseSetting(false);
                     d_ptr->robot_controller->setInitialPose(pose);
+                    d_ptr->robot_controller->enableInitialPoseSetting(false);
+                    updateLocalizationStatus("初始位姿已设置");
                 }
             });
     
     connect(rviz_view.get(), &RVizView::goalSelected, 
             [this](const geometry_msgs::PoseStamped& goal) {
                 if (d_ptr->robot_controller) {
-                    d_ptr->robot_controller->enableGoalSetting(false);
                     d_ptr->robot_controller->setNavigationGoal(goal);
+                    d_ptr->robot_controller->enableGoalSetting(false);
                 }
             });
+}
+
+void NavigationPanel::onPlannerSettings()
+{
+    if (!d_ptr->robot_controller) {
+        return;
+    }
+
+    // 创建并显示规划器设置对话框
+    PlannerSettingsDialog dialog(d_ptr->robot_controller, this);
+    dialog.exec();
 } 
