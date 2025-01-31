@@ -3,7 +3,7 @@
  * @brief ROS通信管理类实现
  */
 
-#include "ros/robot_controller.h"
+#include "ros/robot_controller.h"  // 这里的路径是相对于include目录的
 #include <ros/master.h>
 #include <QDebug>
 #include <tf2/utils.h>
@@ -53,10 +53,29 @@ RobotController::RobotController(QObject* parent)
     // 初始化 action 客户端
     move_base_client_ = std::make_unique<actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction>>("move_base", true);
     
-    // 等待 action 服务器启动
-    if (!move_base_client_->waitForServer(ros::Duration(5.0))) {
-        ROS_WARN("Move base action server not available");
+    // 等待 action 服务器启动,最多等待30秒,每5秒重试一次
+    ros::Time start_time = ros::Time::now();
+    ros::Duration timeout(30.0);  // 总超时时间30秒
+    bool server_connected = false;
+    
+    while (ros::ok() && !server_connected && (ros::Time::now() - start_time) < timeout) {
+        ROS_INFO("Waiting for move_base action server...");
+        server_connected = move_base_client_->waitForServer(ros::Duration(5.0));
+        if (!server_connected) {
+            ROS_WARN("Move base action server not available, retrying...");
+            emit navigationStatusChanged("等待导航服务器启动...");
+        }
     }
+    
+    if (!server_connected) {
+        ROS_ERROR("Failed to connect to move_base action server after 30 seconds");
+        emit navigationStatusChanged("无法连接到导航服务器！");
+        is_initialized_ = false;
+        return;
+    }
+    
+    ROS_INFO("Successfully connected to move_base action server");
+    emit navigationStatusChanged("导航服务器连接成功");
     
     // 初始化可视化标记发布器
     marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/localization_markers", 1);
@@ -77,53 +96,113 @@ RobotController::~RobotController()
 void RobotController::cleanup()
 {
     // 停止所有活动的目标
-        if (move_base_client_ && move_base_client_->isServerConnected()) {
-            move_base_client_->cancelAllGoals();
-        }
-        
+    if (move_base_client_ && move_base_client_->isServerConnected()) {
+        move_base_client_->cancelAllGoals();
+    }
+    
+    // 停止自动定位
+    if (is_localizing_) {
+        is_localizing_ = false;
+        localization_monitor_timer_.stop();
+    }
+    
     // 关闭所有发布者和订阅者
-    cmd_vel_pub_.shutdown();
-    initial_pose_pub_.shutdown();
-        odom_sub_.shutdown();
-    battery_sub_.shutdown();
-    diagnostics_sub_.shutdown();
-        scan_sub_.shutdown();
-        amcl_pose_sub_.shutdown();
-    map_sub_.shutdown();
+    if (cmd_vel_pub_) cmd_vel_pub_.shutdown();
+    if (initial_pose_pub_) initial_pose_pub_.shutdown();
+    if (global_localization_pub_) global_localization_pub_.shutdown();
+    if (marker_pub_) marker_pub_.shutdown();
+    if (tool_manager_pub_) tool_manager_pub_.shutdown();
+    
+    if (odom_sub_) odom_sub_.shutdown();
+    if (battery_sub_) battery_sub_.shutdown();
+    if (diagnostics_sub_) diagnostics_sub_.shutdown();
+    if (scan_sub_) scan_sub_.shutdown();
+    if (amcl_pose_sub_) amcl_pose_sub_.shutdown();
+    if (map_sub_) map_sub_.shutdown();
+    if (initial_pose_sub_) initial_pose_sub_.shutdown();
+    if (goal_sub_) goal_sub_.shutdown();
     
     // 关闭服务客户端
-    global_localization_client_.shutdown();
-    clear_costmaps_client_.shutdown();
+    if (global_localization_client_) global_localization_client_.shutdown();
+    if (clear_costmaps_client_) clear_costmaps_client_.shutdown();
 }
 
 void RobotController::setupPublishers()
 {
-    // 速度控制发布者
-    cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("cmd_vel", 1);
-    
-    // 初始位姿发布者
-    initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
-    
-    // 全局定位发布者
-    global_localization_pub_ = nh_.advertise<std_msgs::Bool>("/global_localization", 1);
-    
-    // 可视化标记发布者
-    marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/localization_markers", 1);
+    try {
+        // 速度控制发布者
+        cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("cmd_vel", 1);
+        
+        // 初始位姿发布者
+        initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
+        
+        // 全局定位发布者
+        global_localization_pub_ = nh_.advertise<std_msgs::Bool>("/global_localization", 1);
+        
+        // 可视化标记发布者
+        marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/localization_markers", 1);
+        
+        // 工具管理器发布者
+        tool_manager_pub_ = nh_.advertise<std_msgs::String>("/rviz/current_tool", 1);
+        
+        // 目标点发布者
+        goal_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
+        
+        ROS_INFO("All publishers initialized successfully");
+    } catch (const ros::Exception& e) {
+        ROS_ERROR("Failed to initialize publishers: %s", e.what());
+        throw;
+    }
 }
 
 void RobotController::setupSubscribers()
 {
-    // 里程计数据订阅者
-    odom_sub_ = nh_.subscribe("odom", 1, &RobotController::odomCallback, this);
-    
-    // AMCL位姿订阅者
-    amcl_pose_sub_ = nh_.subscribe("amcl_pose", 1, &RobotController::amclPoseCallback, this);
-    
-    // 激光扫描数据订阅者
-    scan_sub_ = nh_.subscribe("scan", 1, &RobotController::laserScanCallback, this);
-    
-    // 地图数据订阅者
-    map_sub_ = nh_.subscribe("map", 1, &RobotController::mapCallback, this);
+    try {
+        // 订阅导航目标点
+        goal_sub_ = nh_.subscribe("/move_base_simple/goal", 10,
+            &RobotController::goalCallback, this);
+        ROS_INFO("Subscribed to /move_base_simple/goal");
+
+        // 订阅初始位姿
+        initial_pose_sub_ = nh_.subscribe("/initialpose", 10,
+            &RobotController::initialPoseCallback, this);
+        ROS_INFO("Subscribed to /initialpose");
+
+        // 订阅里程计数据
+        odom_sub_ = nh_.subscribe("odom", 10,
+            &RobotController::odomCallback, this);
+        ROS_INFO("Subscribed to odom");
+
+        // 订阅激光扫描数据
+        scan_sub_ = nh_.subscribe("scan", 10,
+            &RobotController::scanCallback, this);
+        ROS_INFO("Subscribed to scan");
+
+        // 订阅AMCL位姿
+        amcl_pose_sub_ = nh_.subscribe("amcl_pose", 10,
+            &RobotController::amclPoseCallback, this);
+        ROS_INFO("Subscribed to amcl_pose");
+
+        // 订阅电池状态
+        battery_sub_ = nh_.subscribe("battery_state", 10,
+            &RobotController::batteryCallback, this);
+        ROS_INFO("Subscribed to battery_state");
+
+        // 订阅诊断信息
+        diagnostics_sub_ = nh_.subscribe("/diagnostics", 10,
+            &RobotController::diagnosticsCallback, this);
+        ROS_INFO("Subscribed to /diagnostics");
+
+        // 订阅地图数据
+        map_sub_ = nh_.subscribe("map", 1,
+            &RobotController::mapCallback, this);
+        ROS_INFO("Subscribed to map");
+
+        ROS_INFO("All subscribers set up successfully");
+    } catch (const ros::Exception& e) {
+        ROS_ERROR("Failed to set up subscribers: %s", e.what());
+        throw;
+    }
 }
 
 void RobotController::publishVelocity(double linear, double angular)
@@ -179,7 +258,7 @@ void RobotController::setInitialPose(const geometry_msgs::PoseWithCovarianceStam
             .arg(current_pose_.position.y, 0, 'f', 3)
             .arg(yaw, 0, 'f', 1);
         
-        emit poseUpdated(pose.pose);
+        emit poseUpdated(pose.pose.pose);
         emit localizationStatusChanged(status_msg);
         
         // 清除代价地图
@@ -199,99 +278,124 @@ void RobotController::setInitialPose(const geometry_msgs::PoseWithCovarianceStam
 
 void RobotController::startGlobalLocalization()
 {
-    if (!is_localizing_) {
-        std_srvs::Empty srv;
-        if (global_localization_client_.call(srv)) {
-            is_localizing_ = true;
-            localization_progress_ = 0.0;
-            emit localizationStateChanged(false);
-            emit localizationProgressChanged(0.0);
-            emit localizationStatusChanged("正在进行全局定位...");
-            
-            // 启动定位后的回调
-            ros::Duration(2.0).sleep(); // 等待粒子扩散
-            // 订阅AMCL位姿以获取定位结果
-            amcl_pose_sub_ = nh_.subscribe("/amcl_pose", 1, &RobotController::amclPoseCallback, this);
-        }
+    if (!is_initialized_) {
+        ROS_ERROR("RobotController not initialized");
+        emit localizationStatusChanged("错误：RobotController未初始化");
+        emit localizationStateChanged("未初始化");
+        return;
+    }
+
+    std_srvs::Empty srv;
+    if (global_localization_client_.call(srv)) {
+        ROS_INFO("Global localization triggered");
+        emit localizationStatusChanged("已触发全局定位");
+    } else {
+        ROS_WARN("Failed to trigger global localization");
+        emit localizationStatusChanged("触发全局定位失败");
+        emit localizationStateChanged("失败");
     }
 }
 
 void RobotController::cancelGlobalLocalization()
 {
-    if (is_localizing_) {
-        is_localizing_ = false;
-        localization_progress_ = 0.0;
-        emit localizationStateChanged(false);
-        emit localizationProgressChanged(0.0);
+    if (is_initialized_) {
+        ROS_INFO("Cancelling global localization");
+        emit localizationStatusChanged("已取消全局定位");
+        emit localizationStateChanged("已取消");
     }
 }
 
 void RobotController::startNavigation()
 {
-    if (!move_base_client_ || !move_base_client_->isServerConnected()) {
-        ROS_ERROR("Move base action client not initialized or not connected");
-        emit navigationStatusChanged("导航服务未连接，请检查move_base节点是否正常运行");
+    if (!is_initialized_ || !move_base_client_) {
+        ROS_ERROR("RobotController not initialized or move_base client not available");
+        emit navigationStatusChanged("导航服务未初始化");
         return;
     }
 
-    if (is_navigating_) {
-        ROS_INFO("Navigation already in progress");
-        return;
-    }
-
-    // 如果有保存的目标点，重新发送
-    if (!current_goal_.header.frame_id.empty()) {
-        ROS_INFO("Starting navigation to saved goal: x=%.2f, y=%.2f",
-                 current_goal_.pose.position.x,
-                 current_goal_.pose.position.y);
-        setNavigationGoal(current_goal_);
-        } else {
+    if (current_goal_.header.frame_id.empty()) {
         ROS_ERROR("No navigation goal set");
-        emit navigationStatusChanged("请先设置导航目标点！");
+        emit navigationStatusChanged("请先设置导航目标点");
+        return;
+    }
+
+    try {
+        ROS_INFO("Starting navigation to goal: x=%.2f, y=%.2f", 
+                 current_goal_.pose.position.x, 
+                 current_goal_.pose.position.y);
+
+        // 清除代价地图
+        std_srvs::Empty srv;
+        if (clear_costmaps_client_.call(srv)) {
+            ROS_INFO("Costmaps cleared before navigation");
+        }
+
+        // 发布目标点到move_base_simple/goal话题
+        if (goal_pub_) {
+            // 多次发布以确保目标点被正确接收
+            for (int i = 0; i < 3; i++) {
+                goal_pub_.publish(current_goal_);
+                ros::Duration(0.1).sleep();  // 等待0.1秒
+            }
+            ROS_INFO("Published goal to move_base_simple/goal multiple times");
+        } else {
+            ROS_ERROR("Goal publisher not initialized");
+            emit navigationStatusChanged("错误：目标点发布器未初始化！");
+            return;
+        }
+
+        // 创建并发送导航目标
+        move_base_msgs::MoveBaseGoal goal;
+        goal.target_pose = current_goal_;
+        
+        // 设置回调函数
+        move_base_client_->sendGoal(
+            goal,
+            boost::bind(&RobotController::navigationDoneCallback, this, _1, _2),
+            boost::bind(&RobotController::navigationActiveCallback, this),
+            boost::bind(&RobotController::navigationFeedbackCallback, this, _1)
+        );
+
+        is_navigating_ = true;
+        emit navigationStateChanged("进行中");
+        emit navigationStatusChanged("开始导航...");
+        ROS_INFO("Navigation started");
+
+    } catch (const std::exception& e) {
+        ROS_ERROR("Exception in startNavigation: %s", e.what());
+        emit navigationStatusChanged("启动导航失败！");
+        is_navigating_ = false;
     }
 }
 
 void RobotController::pauseNavigation()
 {
-    if (!move_base_client_ || !move_base_client_->isServerConnected()) {
-        qDebug() << "Move base action client not initialized or not connected";
+    if (!is_initialized_ || !move_base_client_) {
+        ROS_ERROR("RobotController not initialized or move_base client not available");
         return;
     }
 
-    move_base_client_->cancelGoal();
-    emit navigationStateChanged(NavigationState::PAUSED);
+    if (is_navigating_) {
+        move_base_client_->cancelGoal();
+        is_navigating_ = false;
+        emit navigationStateChanged("已暂停");
+        emit navigationStatusChanged("导航已暂停");
+    }
 }
 
 void RobotController::stopNavigation()
 {
-    if (!move_base_client_ || !move_base_client_->isServerConnected()) {
-        ROS_ERROR("Move base action client not initialized or not connected");
+    if (!is_initialized_ || !move_base_client_) {
+        ROS_ERROR("RobotController not initialized or move_base client not available");
         return;
     }
 
-    move_base_client_->cancelAllGoals();
-    is_navigating_ = false;
-    emit navigationStateChanged(NavigationState::STOPPED);
-    emit navigationStatusChanged("导航已停止");
-    
-    // 清除代价地图
-    std_srvs::Empty srv;
-    if (clear_costmaps_client_.call(srv)) {
-        ROS_INFO("Costmaps cleared");
-    } else {
-        ROS_WARN("Failed to clear costmaps");
+    if (is_navigating_) {
+        move_base_client_->cancelGoal();
+        is_navigating_ = false;
+        emit navigationStateChanged("已停止");
+        emit navigationStatusChanged("导航已停止");
     }
-}
-
-void RobotController::cancelNavigation()
-{
-    if (!move_base_client_ || !move_base_client_->isServerConnected()) {
-        qDebug() << "Move base action client not initialized or not connected";
-        return;
-    }
-
-    move_base_client_->cancelAllGoals();
-    emit navigationStateChanged(NavigationState::CANCELLED);
 }
 
 void RobotController::startMapping()
@@ -355,7 +459,7 @@ void RobotController::amclPoseCallback(const geometry_msgs::PoseWithCovarianceSt
     double yaw = tf2::getYaw(msg->pose.pose.orientation) * 180.0 / M_PI;
     
     // 发送位姿更新信号
-    emit poseUpdated(msg->pose);
+    emit poseUpdated(msg->pose.pose);
     emit localizationStatusChanged(QString("当前位置: (%1, %2) 朝向%3°")
         .arg(current_pose_.position.x, 0, 'f', 3)
         .arg(current_pose_.position.y, 0, 'f', 3)
@@ -388,50 +492,37 @@ void RobotController::diagnosticsCallback(const diagnostic_msgs::DiagnosticArray
 
 void RobotController::setNavigationGoal(const geometry_msgs::PoseStamped& goal)
 {
-    if (!move_base_client_) {
-        ROS_ERROR("Move base action client not initialized");
-        emit navigationStatusChanged("导航服务未初始化");
-        return;
+    try {
+        ROS_INFO("Setting navigation goal");
+        
+        // 完整复制目标点信息
+        current_goal_.header = goal.header;
+        current_goal_.header.frame_id = "map";  // 确保frame_id正确
+        current_goal_.header.stamp = ros::Time::now();
+        current_goal_.pose = goal.pose;
+        
+        double yaw = tf2::getYaw(goal.pose.orientation) * 180.0 / M_PI;
+        
+        ROS_INFO("Goal set: x=%.3f, y=%.3f, yaw=%.3f",
+                 current_goal_.pose.position.x,
+                 current_goal_.pose.position.y,
+                 yaw);
+                 
+        QString status_msg = QString("已设置导航目标: (%1, %2) 朝向%3°")
+            .arg(current_goal_.pose.position.x, 0, 'f', 3)
+            .arg(current_goal_.pose.position.y, 0, 'f', 3)
+            .arg(yaw, 0, 'f', 1);
+        
+        // 发送目标点设置信号
+        emit goalSet(current_goal_);
+        emit navigationStatusChanged(status_msg);
+        emit navigationStateChanged("就绪");
+        
+        ROS_INFO("Navigation goal is ready");
+    } catch (const std::exception& e) {
+        ROS_ERROR("Exception in setNavigationGoal: %s", e.what());
+        emit navigationStatusChanged("设置导航目标点失败！");
     }
-
-    if (!move_base_client_->isServerConnected()) {
-        ROS_ERROR("Move base action server not connected");
-        emit navigationStatusChanged("导航服务未连接，请检查move_base节点是否正常运行");
-        return;
-    }
-
-    // 检查目标点是否在地图范围内
-    if (std::abs(goal.pose.position.x) > 50.0 || std::abs(goal.pose.position.y) > 50.0) {
-        ROS_ERROR("Goal position out of map bounds");
-        emit navigationStatusChanged("目标点超出地图范围！");
-        return;
-    }
-
-    // 如果正在导航，先取消当前导航
-    if (is_navigating_) {
-        ROS_INFO("Canceling current navigation before starting new one");
-        move_base_client_->cancelAllGoals();
-        ros::Duration(0.5).sleep();  // 等待取消完成
-    }
-
-    // 保存当前目标点
-    current_goal_ = goal;
-
-    // 创建导航目标
-    move_base_msgs::MoveBaseGoal move_base_goal;
-    move_base_goal.target_pose = goal;
-    move_base_goal.target_pose.header.stamp = ros::Time::now();  // 更新时间戳
-
-    // 发送导航目标
-    move_base_client_->sendGoal(
-        move_base_goal,
-        boost::bind(&RobotController::navigationDoneCallback, this, _1, _2),
-        boost::bind(&RobotController::navigationActiveCallback, this),
-        boost::bind(&RobotController::navigationFeedbackCallback, this, _1)
-    );
-    
-    is_navigating_ = true;
-    ROS_INFO("Navigation goal sent");
 }
 
 void RobotController::loadMap(const QString& filename)
@@ -592,15 +683,15 @@ void RobotController::initialPoseCallback(const geometry_msgs::PoseWithCovarianc
         return;
     }
 
-    static ros::Time last_callback_time = ros::Time(0);
-    ros::Time current_time = ros::Time::now();
-    
-    if ((current_time - last_callback_time).toSec() < 0.5) {
-        return;
-    }
-    last_callback_time = current_time;
-
     try {
+        static ros::Time last_publish_time = ros::Time(0);
+        ros::Time current_time = ros::Time::now();
+        
+        // 如果距离上次发布时间小于1秒，则跳过
+        if ((current_time - last_publish_time).toSec() < 1.0) {
+            return;
+        }
+
         geometry_msgs::PoseWithCovarianceStamped current_pose = *msg;
         current_pose.header.stamp = current_time;
         
@@ -612,7 +703,7 @@ void RobotController::initialPoseCallback(const geometry_msgs::PoseWithCovarianc
         
         double yaw = tf2::getYaw(current_pose.pose.pose.orientation) * 180.0 / M_PI;
         
-        emit poseUpdated(current_pose.pose);
+        emit poseUpdated(current_pose.pose.pose);
         
         QString status_msg = QString("当前位置: (%1, %2) 朝向%3°")
             .arg(current_pose_.position.x, 0, 'f', 3)
@@ -620,9 +711,14 @@ void RobotController::initialPoseCallback(const geometry_msgs::PoseWithCovarianc
             .arg(yaw, 0, 'f', 1);
         emit localizationStatusChanged(status_msg);
         
-        std_srvs::Empty srv;
-        if (clear_costmaps_client_.call(srv)) {
-            ROS_INFO("Costmaps cleared after setting initial pose");
+        // 只在第一次设置初始位姿时清除代价地图
+        static bool first_pose_set = false;
+        if (!first_pose_set) {
+            std_srvs::Empty srv;
+            if (clear_costmaps_client_.call(srv)) {
+                ROS_INFO("Costmaps cleared after setting initial pose");
+            }
+            first_pose_set = true;
         }
         
         // 切换回移动相机工具
@@ -631,7 +727,9 @@ void RobotController::initialPoseCallback(const geometry_msgs::PoseWithCovarianc
         tool_msg.data = "rviz/MoveCamera";
         tool_manager_pub_.publish(tool_msg);
         
+        last_publish_time = current_time;
         ROS_INFO("Initial pose set");
+        
     } catch (const std::exception& e) {
         ROS_ERROR("Exception in initialPoseCallback: %s", e.what());
     } catch (...) {
@@ -641,19 +739,56 @@ void RobotController::initialPoseCallback(const geometry_msgs::PoseWithCovarianc
 
 void RobotController::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
-    current_goal_ = *msg;
-    
-    double yaw = tf2::getYaw(msg->pose.orientation) * 180.0 / M_PI;
-    
-    setNavigationGoal(current_goal_);
-    
-    QString status_msg = QString("导航目标: (%1, %2) 朝向%3°")
-        .arg(msg->pose.position.x, 0, 'f', 3)
-        .arg(msg->pose.position.y, 0, 'f', 3)
-        .arg(yaw, 0, 'f', 1);
-    emit navigationStatusChanged(status_msg);
-    
-    ROS_INFO("Goal set and navigation started");
+    try {
+        ROS_INFO("Received new navigation goal");
+        
+        // 完整复制目标点信息
+        current_goal_.header = msg->header;
+        current_goal_.header.frame_id = "map";  // 确保frame_id正确
+        current_goal_.header.stamp = ros::Time::now();
+        current_goal_.pose = msg->pose;
+        
+        double yaw = tf2::getYaw(msg->pose.orientation) * 180.0 / M_PI;
+        
+        ROS_INFO("Goal set: x=%.3f, y=%.3f, yaw=%.3f",
+                 current_goal_.pose.position.x,
+                 current_goal_.pose.position.y,
+                 yaw);
+                 
+        QString status_msg = QString("已设置导航目标: (%1, %2) 朝向%3°")
+            .arg(current_goal_.pose.position.x, 0, 'f', 3)
+            .arg(current_goal_.pose.position.y, 0, 'f', 3)
+            .arg(yaw, 0, 'f', 1);
+        emit navigationStatusChanged(status_msg);
+
+        // 等待一小段时间确保目标点被正确保存
+        ros::Duration(0.1).sleep();
+        
+        // 验证目标点是否正确保存
+        if (current_goal_.header.frame_id.empty()) {
+            ROS_ERROR("Failed to save navigation goal");
+            emit navigationStatusChanged("设置导航目标点失败！");
+            return;
+        }
+        
+        // 清除代价地图
+        std_srvs::Empty srv;
+        if (clear_costmaps_client_.call(srv)) {
+            ROS_INFO("Costmaps cleared");
+        }
+        
+        // 发送目标点设置信号
+        emit goalSet(current_goal_);
+        
+        // 不再自动开始导航,等待用户点击开始导航按钮
+        ROS_INFO("Navigation goal is ready. Waiting for start command.");
+        emit navigationStatusChanged("导航目标已设置,请点击开始导航");
+        emit navigationStateChanged("就绪");
+        
+    } catch (const std::exception& e) {
+        ROS_ERROR("Exception in goalCallback: %s", e.what());
+        emit navigationStatusChanged("设置导航目标点失败！");
+    }
 }
 
 void RobotController::startAutoLocalization()
@@ -734,28 +869,26 @@ void RobotController::startAutoLocalization()
     dynamic_reconfigure::Config conf;
     
     // 设置整数参数
-    dynamic_reconfigure::IntParameter int_param;
-    int_param.name = "min_particles";
-    int_param.value = 10000;  // 增加最小粒子数
-    conf.ints.push_back(int_param);
+    dynamic_reconfigure::IntParameter min_particles;
+    min_particles.name = "min_particles";
+    min_particles.value = 20000;
+    conf.ints.push_back(min_particles);
     
-    int_param.name = "max_particles";
-    int_param.value = 20000;  // 增加最大粒子数
-    conf.ints.push_back(int_param);
+    dynamic_reconfigure::IntParameter max_particles;
+    max_particles.name = "max_particles";
+    max_particles.value = 50000;
+    conf.ints.push_back(max_particles);
     
     // 设置浮点数参数
-    dynamic_reconfigure::DoubleParameter double_param;
-    double_param.name = "update_min_d";
-    double_param.value = 0.05;  // 降低更新阈值以获得更频繁的更新
-    conf.doubles.push_back(double_param);
+    dynamic_reconfigure::DoubleParameter update_min_d;
+    update_min_d.name = "update_min_d";
+    update_min_d.value = 0.02;
+    conf.doubles.push_back(update_min_d);
     
-    double_param.name = "update_min_a";
-    double_param.value = 0.1;   // 降低角度更新阈值
-    conf.doubles.push_back(double_param);
-    
-    double_param.name = "recovery_alpha_fast";
-    double_param.value = 0.1;
-    conf.doubles.push_back(double_param);
+    dynamic_reconfigure::DoubleParameter update_min_a;
+    update_min_a.name = "update_min_a";
+    update_min_a.value = 0.05;
+    conf.doubles.push_back(update_min_a);
     
     srv_req.config = conf;
     
@@ -784,7 +917,11 @@ void RobotController::startAutoLocalization()
 
 void RobotController::monitorLocalization(const ros::TimerEvent&)
 {
-    if (!current_amcl_pose_.header.stamp.isZero()) {
+    if (!is_localizing_) {
+        return;
+    }
+
+    try {
         // 计算粒子云的协方差来评估定位质量
         double position_variance = 
             current_pose_cov_[0] + current_pose_cov_[7];  // x和y方向的方差之和
@@ -804,13 +941,11 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
             if (is_obstacle_detected_) {
                 // 根据激光扫描数据选择避让方向
                 if (left_space_larger_) {
-                    // 左侧空间更大，向左转
-                    current_rotation_speed_ = 0.3;
+                    current_rotation_speed_ = 0.2;  // 降低避障转向速度
                     current_linear_speed_ = 0.0;
                     emit localizationStatusChanged("正在向左避让障碍物...");
                 } else {
-                    // 右侧空间更大，向右转
-                    current_rotation_speed_ = -0.3;
+                    current_rotation_speed_ = -0.2;  // 降低避障转向速度
                     current_linear_speed_ = 0.0;
                     emit localizationStatusChanged("正在向右避让障碍物...");
                 }
@@ -825,15 +960,31 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
                     double angle_diff = angles::shortest_angular_distance(current_yaw, angle_to_center);
                     
                     // 如果面向中心，向前移动；否则原地旋转
-                    if (fabs(angle_diff) < 0.3) {
+                    if (fabs(angle_diff) < 0.2) {  // 降低角度阈值
                         current_rotation_speed_ = 0.0;
-                        current_linear_speed_ = 0.05;  // 降低线速度为5cm/s
+                        current_linear_speed_ = 0.03;  // 降低线速度为3cm/s
                         emit localizationStatusChanged("正在向中心移动...");
                     } else {
-                        current_rotation_speed_ = (angle_diff > 0) ? 0.2 : -0.2;  // 降低旋转速度
+                        current_rotation_speed_ = (angle_diff > 0) ? 0.15 : -0.15;  // 降低旋转速度
                         current_linear_speed_ = 0.0;
                         emit localizationStatusChanged("正在转向中心点...");
                     }
+                } else {
+                    // 在安全范围内，执行定位运动
+                    static ros::Time last_switch = ros::Time::now();
+                    double time_since_switch = (ros::Time::now() - last_switch).toSec();
+                    
+                    // 每5秒切换一次运动方向
+                    if (time_since_switch > 5.0) {
+                        current_rotation_speed_ = -current_rotation_speed_;
+                        last_switch = ros::Time::now();
+                    }
+                    
+                    // 保持较低的速度进行精确定位
+                    if (current_rotation_speed_ == 0.0) {
+                        current_rotation_speed_ = 0.15;  // 降低旋转速度
+                    }
+                    current_linear_speed_ = 0.02;  // 保持较低的线速度
                 }
             }
             
@@ -842,13 +993,12 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
             
         } catch (tf::TransformException& ex) {
             ROS_WARN_THROTTLE(1.0, "Failed to get robot position: %s", ex.what());
-            // 发生错误时停止运动
             publishVelocity(0.0, 0.0);
             emit localizationStatusChanged("无法获取机器人位置，请检查TF转换...");
         }
         
-        // 如果方差小于阈值,认为定位成功
-        if (position_variance < 0.1 && orientation_variance < 0.1) {
+        // 使用更严格的方差阈值判断定位成功
+        if (position_variance < 0.05 && orientation_variance < 0.05) {  // 降低方差阈值
             localization_monitor_timer_.stop();
             
             // 停止机器人运动
@@ -868,10 +1018,22 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
             initial_pose.pose.covariance[7] = 0.25;   // y
             initial_pose.pose.covariance[35] = 0.068; // yaw
             
+            if (!initial_pose_pub_) {
+                ROS_ERROR("Initial pose publisher is invalid!");
+                emit localizationStatusChanged("错误：无法发布初始位姿！");
+                return;
+            }
+
             // 多次发布初始位姿以确保设置成功
             for(int i = 0; i < 3; i++) {
-                initial_pose_pub_.publish(initial_pose);
-                ros::Duration(0.1).sleep();  // 等待0.1秒
+                try {
+                    initial_pose_pub_.publish(initial_pose);
+                    ros::Duration(0.1).sleep();  // 等待0.1秒
+                } catch (const std::exception& e) {
+                    ROS_ERROR("Failed to publish initial pose: %s", e.what());
+                    emit localizationStatusChanged("错误：发布初始位姿失败！");
+                    return;
+                }
             }
             ROS_INFO("Published initial pose multiple times after successful localization");
             
@@ -884,71 +1046,43 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
                 ros::Duration(0.1).sleep();
             }
             
+            is_localizing_ = false;
+            is_localized_ = true;
+            
             // 计算最终位置和朝向
             double final_yaw = tf2::getYaw(initial_pose.pose.pose.orientation) * 180.0 / M_PI;
             QString result_msg = QString("定位成功！最终位置: (%1, %2) 朝向: %3°")
                 .arg(initial_pose.pose.pose.position.x, 0, 'f', 3)
                 .arg(initial_pose.pose.pose.position.y, 0, 'f', 3)
                 .arg(final_yaw, 0, 'f', 1);
+            
             emit localizationStatusChanged(result_msg);
-            
-            // 恢复正常的AMCL参数
-            dynamic_reconfigure::ReconfigureRequest srv_req;
-            dynamic_reconfigure::ReconfigureResponse srv_resp;
-            dynamic_reconfigure::Config conf;
-            
-            // 设置整数参数
-            dynamic_reconfigure::IntParameter int_param;
-            int_param.name = "min_particles";
-            int_param.value = 100;
-            conf.ints.push_back(int_param);
-            
-            int_param.name = "max_particles";
-            int_param.value = 5000;
-            conf.ints.push_back(int_param);
-            
-            // 设置浮点数参数
-            dynamic_reconfigure::DoubleParameter double_param;
-            double_param.name = "update_min_d";
-            double_param.value = 0.2;  // 恢复默认值
-            conf.doubles.push_back(double_param);
-            
-            double_param.name = "update_min_a";
-            double_param.value = 0.5;  // 恢复默认值
-            conf.doubles.push_back(double_param);
-            
-            srv_req.config = conf;
-            ros::service::call("/amcl/set_parameters", srv_req, srv_resp);
-            
-            // 清除可视化标记
-            visualization_msgs::MarkerArray marker_array;
-            visualization_msgs::Marker delete_marker;
-            delete_marker.header.frame_id = "map";
-            delete_marker.header.stamp = ros::Time::now();
-            delete_marker.ns = "localization_boundary";
-            delete_marker.id = 0;
-            delete_marker.action = visualization_msgs::Marker::DELETE;
-            marker_array.markers.push_back(delete_marker);
-            
-            delete_marker.ns = "localization_center";
-            delete_marker.id = 1;
-            marker_array.markers.push_back(delete_marker);
-            
-            marker_pub_.publish(marker_array);
-            
             emit localizationProgressChanged(100.0);
-            emit localizationStatusChanged("定位成功");
-        } else {
+            emit localizationStateChanged("已完成");
+            
+            // 重新初始化导航相关组件
+            ros::Duration(0.5).sleep();  // 等待系统稳定
+            
+            // 确保move_base客户端仍然有效
+            if (!move_base_client_ || !move_base_client_->isServerConnected()) {
+                ROS_WARN("Reinitializing move_base client after localization");
+                move_base_client_.reset(new actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction>("move_base", true));
+                ros::Duration(1.0).sleep();  // 等待连接建立
+            }
+    } else {
             // 根据方差计算定位进度
             double progress = std::max(0.0, std::min(100.0, 
-                (1.0 - position_variance/2.0) * 100.0));
+                (1.0 - position_variance/1.0) * 100.0));  // 调整进度计算
             emit localizationProgressChanged(progress);
             emit localizationStatusChanged(
                 QString("正在定位 (位置误差: %1m, 角度误差: %2°)")
-                .arg(sqrt(position_variance), 0, 'f', 2)
-                .arg(sqrt(orientation_variance) * 180.0 / M_PI, 0, 'f', 1)
+                .arg(sqrt(position_variance), 0, 'f', 3)  // 显示更精确的误差值
+                .arg(sqrt(orientation_variance) * 180.0 / M_PI, 0, 'f', 2)
             );
         }
+    } catch (const std::exception& e) {
+        ROS_ERROR("Exception in monitorLocalization: %s", e.what());
+        emit localizationStatusChanged(QString("定位监控出错：%1").arg(e.what()));
     }
 }
 
@@ -1014,7 +1148,7 @@ void RobotController::laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& 
             ROS_INFO("Obstacle detected at distance %.2f m, will turn %s", 
                      min_front_dist, 
                      left_space_larger_ ? "left" : "right");
-        } else {
+    } else {
             ROS_INFO_THROTTLE(2.0, "Obstacle detected at distance %.2f m, will turn %s", 
                      min_front_dist, 
                      left_space_larger_ ? "left" : "right");
@@ -1027,45 +1161,58 @@ void RobotController::laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& 
     }
 }
 
-void RobotController::navigationDoneCallback(const actionlib::SimpleClientGoalState& state,
-                                          const move_base_msgs::MoveBaseResultConstPtr& result)
+void RobotController::navigationDoneCallback(
+    const actionlib::SimpleClientGoalState& state,
+    const move_base_msgs::MoveBaseResultConstPtr& result)
 {
     is_navigating_ = false;
-    
-    if (state == actionlib::SimpleClientGoalState::SUCCEEDED) {
-        ROS_INFO("Navigation succeeded");
-        emit navigationStateChanged(NavigationState::SUCCEEDED);
-        emit navigationStatusChanged("导航成功到达目标点");
-        emit navigationProgressChanged(100.0);
-    } else {
-        ROS_WARN("Navigation failed: %s", state.toString().c_str());
-        QString error_msg;
-        if (state == actionlib::SimpleClientGoalState::ABORTED) {
-            error_msg = "导航失败：无法找到有效路径或遇到障碍物";
-        } else if (state == actionlib::SimpleClientGoalState::REJECTED) {
-            error_msg = "导航失败：目标点无效或不可达";
-        } else if (state == actionlib::SimpleClientGoalState::PREEMPTED) {
-            error_msg = "导航已取消";
-        } else {
-            error_msg = QString("导航失败：%1").arg(state.toString().c_str());
-        }
-        emit navigationStateChanged(NavigationState::FAILED);
-        emit navigationStatusChanged(error_msg);
-        emit navigationProgressChanged(0.0);
-        
-        // 清除代价地图
-        std_srvs::Empty srv;
-        if (clear_costmaps_client_.call(srv)) {
-            ROS_INFO("Costmaps cleared after navigation failure");
-        }
+
+    switch (state.state_) {
+        case actionlib::SimpleClientGoalState::SUCCEEDED:
+            ROS_INFO("Navigation succeeded");
+            emit navigationStateChanged("已完成");
+            emit navigationStatusChanged("导航成功完成");
+            emit navigationProgressChanged(100.0);
+            break;
+
+        case actionlib::SimpleClientGoalState::ABORTED:
+            ROS_WARN("Navigation aborted");
+            emit navigationStateChanged("已中止");
+            emit navigationStatusChanged("导航被中止");
+            break;
+
+        case actionlib::SimpleClientGoalState::REJECTED:
+            ROS_WARN("Navigation goal rejected");
+            emit navigationStateChanged("已拒绝");
+            emit navigationStatusChanged("导航目标被拒绝");
+            break;
+
+        case actionlib::SimpleClientGoalState::PREEMPTED:
+            ROS_INFO("Navigation preempted");
+            emit navigationStateChanged("已取消");
+            emit navigationStatusChanged("导航已取消");
+            break;
+
+        case actionlib::SimpleClientGoalState::LOST:
+            ROS_ERROR("Navigation lost");
+            emit navigationStateChanged("已丢失");
+            emit navigationStatusChanged("导航目标丢失");
+            break;
+
+        default:
+            ROS_ERROR("Unknown navigation result");
+            emit navigationStateChanged("未知状态");
+            emit navigationStatusChanged("未知的导航结果");
+            break;
     }
 }
 
 void RobotController::navigationActiveCallback()
 {
+    ROS_INFO("Navigation goal is now active");
     is_navigating_ = true;
-    emit navigationStateChanged(NavigationState::ACTIVE);
-    emit navigationStatusChanged("正在导航到目标点...");
+    emit navigationStateChanged("进行中");
+    emit navigationStatusChanged("正在导航到目标点");
 }
 
 void RobotController::navigationFeedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback)
@@ -1087,7 +1234,7 @@ void RobotController::navigationFeedbackCallback(const move_base_msgs::MoveBaseF
     if (std::abs(distance - last_distance) < 0.01) {  // 如果距离变化很小
         if ((ros::Time::now() - last_progress_time).toSec() > 10.0) {  // 超过10秒没有进展
             ROS_WARN("Navigation seems stuck");
-            emit navigationStatusChanged("导航似乎卡住了，尝试重新规划路径...");
+            emit navigationStatusChanged(QString("导航似乎卡住了，尝试重新规划路径..."));
             // 清除代价地图
             std_srvs::Empty srv;
             if (clear_costmaps_client_.call(srv)) {
@@ -1103,12 +1250,8 @@ void RobotController::navigationFeedbackCallback(const move_base_msgs::MoveBaseF
     ROS_INFO("Navigation progress: %.1f%%, distance: %.2fm", progress, distance);
     
     emit navigationProgressChanged(progress);
-    emit navigationStatusChanged(QString("距离目标点还有 %.2f 米 (进度: %.1f%%)")
-        .arg(distance, 0, 'f', 2)
-        .arg(progress, 0, 'f', 1));
-    
-    // 保存当前距离
-    distance_to_goal_ = distance;
+    emit navigationStatusChanged(QString("距离目标点还有 %1 米 (进度: %2%%)").arg(distance, 0, 'f', 2).arg(progress, 0, 'f', 1));
+    emit distanceToGoalChanged(distance);
 }
 
 void RobotController::setGlobalPlanner(const QString& planner_name)
@@ -1235,4 +1378,30 @@ void RobotController::publishLocalizationMarkers()
     
     // 发布标记
     marker_pub_.publish(marker_array);
+}
+
+void RobotController::stopAutoLocalization()
+{
+    if (!is_localizing_) {
+        return;
+    }
+
+    ROS_INFO("Stopping auto localization...");
+    
+    // 停止定位监控定时器
+    localization_monitor_timer_.stop();
+    
+    // 停止机器人运动
+    publishVelocity(0.0, 0.0);
+    
+    // 重置状态
+    is_localizing_ = false;
+    localization_progress_ = 0.0;
+    
+    // 发送状态更新
+    emit localizationProgressChanged(0.0);
+    emit localizationStatusChanged("自动定位已停止");
+    emit localizationStateChanged("已取消");
+    
+    ROS_INFO("Auto localization stopped");
 } 
