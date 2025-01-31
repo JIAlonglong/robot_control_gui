@@ -51,6 +51,7 @@ public:
     bool isNavigating() const { return is_navigating_; }
     bool isLocalized() const { return is_localized_; }
     bool isMapping() const { return is_mapping_; }
+    geometry_msgs::Pose getCurrentPose() const { return current_pose_; }
 
     void setMasterURI(const QString& uri);
     void setHostname(const QString& hostname);
@@ -63,11 +64,13 @@ public:
     void startNavigation();
     void pauseNavigation();
     void stopNavigation();
-    void cancelNavigation();
+    void resumeNavigation();
+    void startAutoLocalization();
+    void stopAutoLocalization();
+    void clearCostmaps();
 
     void startGlobalLocalization();
     void cancelGlobalLocalization();
-    void startAutoLocalization();
 
     void startMapping();
     void stopMapping();
@@ -119,13 +122,17 @@ public:
     QString getCurrentGlobalPlanner() const { return current_global_planner_; }
     QString getCurrentLocalPlanner() const { return current_local_planner_; }
 
+    // 回调函数移到public
+    void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
+    void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
+
 signals:
     void velocityChanged(double linear, double angular);
     void batteryStateChanged(const sensor_msgs::BatteryState& state);
-    void localizationStateChanged(bool is_localized);
+    void localizationStateChanged(const QString& state);
     void localizationProgressChanged(double progress);
     void localizationStatusChanged(const QString& status);
-    void navigationStateChanged(NavigationState state);
+    void navigationStateChanged(const QString& state);
     void navigationProgressChanged(double progress);
     void navigationStatusChanged(const QString& status);
     void distanceToGoalChanged(double distance);
@@ -134,12 +141,13 @@ signals:
     void mappingStateChanged(bool is_mapping);
     void mappingProgressChanged(double progress);
     void navigationModeChanged(int mode);
-    void poseUpdated(const geometry_msgs::PoseWithCovariance& pose);
+    void poseUpdated(const geometry_msgs::Pose& pose);
     void laserScanUpdated(const sensor_msgs::LaserScan& scan);
-    void diagnosticsUpdated(const diagnostic_msgs::DiagnosticArray& array);
+    void diagnosticsUpdated(const diagnostic_msgs::DiagnosticArray& diagnostics);
     void goalDisplayEnabled(bool enabled);
     void globalPlannerChanged(const QString& planner_name);
     void localPlannerChanged(const QString& planner_name);
+    void goalSet(const geometry_msgs::PoseStamped& goal);
 
 private:
     void cleanup();
@@ -154,8 +162,6 @@ private:
     void batteryCallback(const sensor_msgs::BatteryState::ConstPtr& msg);
     void diagnosticsCallback(const diagnostic_msgs::DiagnosticArray::ConstPtr& msg);
     void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg);
-    void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
-    void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
     void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
     
     void navigationDoneCallback(const actionlib::SimpleClientGoalState& state,
@@ -168,6 +174,7 @@ private:
     ros::Publisher cmd_vel_pub_;
     ros::Publisher initial_pose_pub_;
     ros::Publisher tool_manager_pub_;
+    ros::Publisher goal_pub_;
     
     ros::Subscriber odom_sub_;
     ros::Subscriber scan_sub_;

@@ -143,6 +143,15 @@ file(GLOB_RECURSE QT_HEADERS
 add_library(${PROJECT_NAME} SHARED
   ${QT_SOURCES}
   ${QT_HEADERS}
+  src/ros/robot_controller.cpp
+  src/ui/main_window.cpp
+  src/ui/navigation_panel.cpp
+  src/ui/control_panel.cpp
+  src/ui/settings_panel.cpp
+  src/ui/dashboard_window.cpp
+  src/ui/rviz_view.cpp
+  src/ui/planner_settings_dialog.cpp
+  src/ui/goal_setting_dialog.cpp
 )
 
 # 链接主程序库的依赖

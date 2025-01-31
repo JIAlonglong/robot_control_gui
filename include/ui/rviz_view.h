@@ -1,5 +1,4 @@
-#ifndef ROBOT_CONTROL_GUI_RVIZ_VIEW_H
-#define ROBOT_CONTROL_GUI_RVIZ_VIEW_H
+#pragma once
 
 #include <QWidget>
 #include <QLabel>
@@ -18,6 +17,8 @@
 #include <sensor_msgs/LaserScan.h>
 #include <OGRE/OgreVector3.h>
 #include <OGRE/OgreQuaternion.h>
+#include <ros/ros.h>
+#include "ros/robot_controller.h"
 
 class RVizView : public QWidget {
     Q_OBJECT
@@ -25,6 +26,7 @@ public:
     explicit RVizView(QWidget* parent = nullptr);
     ~RVizView() override;
 
+    void initialize();
     void setDisplayEnabled(const QString& display_name, bool enabled);
     void setRobotModel(const QString& model);
     void setFixedFrame(const QString& frame);
@@ -33,9 +35,13 @@ public:
     void updateRobotPose(const nav_msgs::OdometryConstPtr& odom);
     void updateLaserScan(const sensor_msgs::LaserScanConstPtr& scan);
     void updatePath(const std::vector<geometry_msgs::PoseStamped>& poses);
+    void setRobotController(std::shared_ptr<RobotController> controller) { robot_controller_ = controller; }
+    void activateGoalTool();
+    void activateInitialPoseTool();
 
 public slots:
     void onGoalToolActivated();
+    void onGoalToolDeactivated();
     void onInitialPoseToolActivated();
     void onGoalPositionSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation);
     void onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation);
@@ -43,9 +49,11 @@ public slots:
 signals:
     void goalSelected(const geometry_msgs::PoseStamped& goal);
     void initialPoseSelected(const geometry_msgs::PoseWithCovarianceStamped& pose);
+    void goalToolStatusChanged(bool active);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void setupGoalTool();
 
 private:
     void cleanup();
@@ -54,6 +62,7 @@ private:
     QLabel* status_label_{nullptr};
     rviz::RenderPanel* render_panel_{nullptr};
     rviz::VisualizationManager* manager_{nullptr};
+    rviz::DisplayGroup* display_group_{nullptr};
     rviz::Display* grid_display_{nullptr};
     rviz::Display* robot_model_display_{nullptr};
     rviz::Display* map_display_{nullptr};
@@ -64,6 +73,6 @@ private:
     rviz::Tool* goal_tool_{nullptr};
     rviz::Tool* initial_pose_tool_{nullptr};
     QMutex mutex_;
-};
-
-#endif // ROBOT_CONTROL_GUI_RVIZ_VIEW_H 
+    ros::NodeHandle nh_;
+    std::shared_ptr<RobotController> robot_controller_;
+}; 

@@ -49,11 +49,12 @@ MainWindow::MainWindow(QWidget* parent)
             throw std::runtime_error("ROS节点未初始化");
         }
 
-    // 创建机器人控制器
+    // 创建机器人控制器（只创建一次）
     d_->robot_controller_ = std::make_shared<RobotController>();
     if (!d_->robot_controller_) {
         throw std::runtime_error("无法创建机器人控制器");
     }
+    ROS_INFO("RobotController created");
 
     // 设置窗口标题和大小
     setWindowTitle(tr("TurtleBot3 控制面板"));
@@ -61,8 +62,17 @@ MainWindow::MainWindow(QWidget* parent)
 
     // 设置UI
     setupUi();
+    ROS_INFO("UI setup completed");
+    
+    // 设置信号连接（在UI设置完成后）
+        setupConnections();
+    ROS_INFO("Signal connections setup completed");
+        
+    // 设置ROS相关
     setupSubscribers();
         setupRosConnections();
+
+    ROS_INFO("MainWindow initialization completed");
 }
 
 MainWindow::~MainWindow()
@@ -74,6 +84,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupUi()
 {
+    ROS_INFO("Setting up UI in MainWindow");
+    
     // 设置窗口属性
     setWindowTitle(tr("机器人控制界面"));
     setMinimumSize(1024, 768);
@@ -89,25 +101,25 @@ void MainWindow::setupUi()
 
     // 创建RViz视图
     d_->rviz_view_ = std::make_shared<RVizView>(d_->central_widget_);
+    ROS_INFO("RVizView created");
     
     // 创建堆叠部件
     d_->stacked_widget_ = new QStackedWidget(d_->central_widget_);
     
     // 创建控制面板
-    d_->robot_controller_ = std::make_shared<RobotController>();
     d_->control_panel_ = std::make_shared<ControlPanel>(d_->robot_controller_, d_->stacked_widget_);
     d_->stacked_widget_->addWidget(d_->control_panel_.get());
+    ROS_INFO("ControlPanel created");
     
     // 创建导航面板
     d_->navigation_panel_ = std::make_shared<NavigationPanel>(d_->robot_controller_, d_->stacked_widget_);
     d_->stacked_widget_->addWidget(d_->navigation_panel_.get());
-    
-    // 设置RVizView
-    d_->navigation_panel_->setRVizView(d_->rviz_view_);
+    ROS_INFO("NavigationPanel created");
     
     // 创建设置面板
     d_->settings_panel_ = std::make_shared<SettingsPanel>(d_->robot_controller_, d_->stacked_widget_);
     d_->stacked_widget_->addWidget(d_->settings_panel_.get());
+    ROS_INFO("SettingsPanel created");
     
     // 设置布局
     main_layout->addWidget(d_->rviz_view_.get(), 2);  // RViz视图占2/3
@@ -115,16 +127,23 @@ void MainWindow::setupUi()
     
     // 创建工具栏
     createToolBar();
+    ROS_INFO("Toolbar created");
     
     // 创建显示选项面板
     createDisplayOptionsPanel();
+    ROS_INFO("Display options panel created");
     
     // 设置初始页面
     d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
+    ROS_INFO("Initial page set to control panel");
+    
+    ROS_INFO("UI setup completed in MainWindow");
 }
 
 void MainWindow::createToolBar()
 {
+    ROS_INFO("Creating toolbar");
+    
     d_->tool_bar_ = addToolBar(tr("工具栏"));
     d_->tool_bar_->setMovable(false);
     d_->tool_bar_->setFloatable(false);
@@ -172,17 +191,18 @@ void MainWindow::createToolBar()
     d_->tool_bar_->addWidget(spacer);
 
     // 添加状态标签
-    auto* status_label = new QLabel(tr("就绪"), this);
-    d_->tool_bar_->addWidget(status_label);
+    d_->status_label_ = new QLabel(tr("就绪"), this);
+    d_->tool_bar_->addWidget(d_->status_label_);
 
     // 连接信号
     connect(control_action, &QAction::triggered, this, [this, control_action, navigation_action, settings_action]() {
         if (control_action->isChecked()) {
             navigation_action->setChecked(false);
             settings_action->setChecked(false);
-            d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
-        } else {
-            control_action->setChecked(true);
+            if (d_->control_panel_) {
+                d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
+                ROS_INFO("Switched to control panel");
+            }
         }
     });
 
@@ -190,9 +210,10 @@ void MainWindow::createToolBar()
         if (navigation_action->isChecked()) {
             control_action->setChecked(false);
             settings_action->setChecked(false);
-            d_->stacked_widget_->setCurrentWidget(d_->navigation_panel_.get());
-        } else {
-            navigation_action->setChecked(true);
+            if (d_->navigation_panel_) {
+                d_->stacked_widget_->setCurrentWidget(d_->navigation_panel_.get());
+                ROS_INFO("Switched to navigation panel");
+            }
         }
     });
 
@@ -200,11 +221,14 @@ void MainWindow::createToolBar()
         if (settings_action->isChecked()) {
             control_action->setChecked(false);
             navigation_action->setChecked(false);
-            d_->stacked_widget_->setCurrentWidget(d_->settings_panel_.get());
-        } else {
-            settings_action->setChecked(true);
+            if (d_->settings_panel_) {
+                d_->stacked_widget_->setCurrentWidget(d_->settings_panel_.get());
+                ROS_INFO("Switched to settings panel");
+            }
         }
     });
+    
+    ROS_INFO("Toolbar created");
 }
 
 void MainWindow::createDisplayOptionsPanel()
@@ -289,20 +313,6 @@ void MainWindow::createDisplayOptionsPanel()
     d_->display_options_dock_ = dock;
 }
 
-void MainWindow::connectSignals()
-{
-    if (d_->rviz_view_) {
-        connect(d_->rviz_view_.get(), &RVizView::goalSelected,
-                this, &MainWindow::onGoalSelected);
-        connect(d_->rviz_view_.get(), &RVizView::initialPoseSelected,
-                this, &MainWindow::onInitialPoseSelected);
-    }
-
-    if (d_->navigation_panel_) {
-        // 连接导航面板的信号
-    }
-}
-
 void MainWindow::onLinearJoystickMoved(double x, double y)
 {
     if (!d_->robot_controller_) return;
@@ -343,24 +353,56 @@ void MainWindow::onInitialPoseSelected(const geometry_msgs::PoseWithCovarianceSt
     }
 }
 
-void MainWindow::createFloatingControlPanel()
+void MainWindow::onDisplayOptionsChanged()
 {
-    QDockWidget* dock = new QDockWidget(tr("速度控制"), this);
-    dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    QWidget* content = d_->display_options_dock_->widget();
+    if (!content) return;
 
-    QWidget* control_widget = new QWidget(dock);
-    QVBoxLayout* layout = new QVBoxLayout(control_widget);
+    QCheckBox* box = content->findChild<QCheckBox*>("grid_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Grid", box->isChecked());
+        }
+    }
 
-    d_->speed_dashboard_ = std::make_shared<SpeedDashboard>(control_widget);
-    layout->addWidget(d_->speed_dashboard_.get());
+    box = content->findChild<QCheckBox*>("map_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Map", box->isChecked());
+        }
+    }
 
-    dock->setWidget(control_widget);
-    addDockWidget(Qt::RightDockWidgetArea, dock);
+    box = content->findChild<QCheckBox*>("robot_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Robot Model", box->isChecked());
+        }
+    }
+
+    box = content->findChild<QCheckBox*>("laser_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("LaserScan", box->isChecked());
+        }
+    }
+
+    box = content->findChild<QCheckBox*>("path_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Path", box->isChecked());
+        }
+    }
+
+    box = content->findChild<QCheckBox*>("goal_box");
+    if (box) {
+        if (d_->rviz_view_) {
+            d_->rviz_view_->setDisplayEnabled("Goal", box->isChecked());
+        }
+    }
 }
 
 void MainWindow::setupSubscribers()
 {
-    d_->goal_pub_ = d_->nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
     d_->path_sub_ = d_->nh_.subscribe("/move_base/NavfnROS/plan", 1, &MainWindow::pathCallback, this);
     d_->map_sub_ = d_->nh_.subscribe("/map", 1, &MainWindow::mapCallback, this);
     d_->scan_sub_ = d_->nh_.subscribe("/scan", 1, &MainWindow::scanCallback, this);
@@ -483,64 +525,16 @@ void MainWindow::updateRobotVelocity()
 
 void MainWindow::setupRosConnections()
 {
-    d_->goal_pub_ = d_->nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
     d_->path_sub_ = d_->nh_.subscribe("/move_base/NavfnROS/plan", 1, &MainWindow::pathCallback, this);
     d_->map_sub_ = d_->nh_.subscribe("/map", 1, &MainWindow::mapCallback, this);
     d_->scan_sub_ = d_->nh_.subscribe("/scan", 1, &MainWindow::scanCallback, this);
     d_->odom_sub_ = d_->nh_.subscribe("/odom", 1, &MainWindow::odomCallback, this);
 }
 
-void MainWindow::onDisplayOptionsChanged()
-{
-    QWidget* content = d_->display_options_dock_->widget();
-    if (!content) return;
-
-    QCheckBox* box = content->findChild<QCheckBox*>("grid_box");
-    if (box) {
-        if (d_->rviz_view_) {
-            d_->rviz_view_->setDisplayEnabled("Grid", box->isChecked());
-        }
-    }
-
-    box = content->findChild<QCheckBox*>("map_box");
-    if (box) {
-        if (d_->rviz_view_) {
-            d_->rviz_view_->setDisplayEnabled("Map", box->isChecked());
-        }
-    }
-
-    box = content->findChild<QCheckBox*>("robot_box");
-    if (box) {
-        if (d_->rviz_view_) {
-            d_->rviz_view_->setDisplayEnabled("Robot Model", box->isChecked());
-        }
-    }
-
-    box = content->findChild<QCheckBox*>("laser_box");
-    if (box) {
-        if (d_->rviz_view_) {
-            d_->rviz_view_->setDisplayEnabled("LaserScan", box->isChecked());
-        }
-    }
-
-    box = content->findChild<QCheckBox*>("path_box");
-    if (box) {
-        if (d_->rviz_view_) {
-            d_->rviz_view_->setDisplayEnabled("Path", box->isChecked());
-        }
-    }
-
-    box = content->findChild<QCheckBox*>("goal_box");
-    if (box) {
-        if (d_->rviz_view_) {
-            d_->rviz_view_->setDisplayEnabled("Goal", box->isChecked());
-        }
-    }
-}
-
 void MainWindow::pathCallback(const nav_msgs::PathConstPtr& msg)
 {
     if (d_->rviz_view_) {
+        ROS_INFO("Received path update with %zu poses", msg->poses.size());
         d_->rviz_view_->updatePath(msg->poses);
     }
 }
@@ -579,4 +573,66 @@ void MainWindow::onRobotStatusChanged(const QString& status)
     if (statusBar()) {
     statusBar()->showMessage(status);
     }
+}
+
+void MainWindow::setupConnections()
+{
+    ROS_INFO("Setting up connections in MainWindow");
+    
+    if (!d_->rviz_view_ || !d_->robot_controller_ || !d_->navigation_panel_) {
+        ROS_ERROR("Required components not initialized");
+        return;
+    }
+
+    // 连接 RVizView 的信号到 RobotController
+    connect(d_->rviz_view_.get(), &RVizView::goalSelected,
+            [this](const geometry_msgs::PoseStamped& goal) {
+                ROS_INFO("Goal selected signal received in MainWindow");
+                if (d_->robot_controller_) {
+                    ROS_INFO("Forwarding goal to RobotController");
+                    d_->robot_controller_->setNavigationGoal(goal);
+                }
+            });
+    ROS_INFO("Connected RVizView goalSelected signal");
+
+    connect(d_->rviz_view_.get(), &RVizView::initialPoseSelected,
+            [this](const geometry_msgs::PoseWithCovarianceStamped& pose) {
+                ROS_INFO("Initial pose selected signal received in MainWindow");
+                if (d_->robot_controller_) {
+                    d_->robot_controller_->setInitialPose(pose);
+                }
+            });
+    ROS_INFO("Connected RVizView initialPoseSelected signal");
+
+    // 连接 RobotController 的信号到 NavigationPanel
+    connect(d_->robot_controller_.get(), &RobotController::navigationStateChanged,
+            d_->navigation_panel_.get(), &NavigationPanel::onNavigationStateChanged);
+    connect(d_->robot_controller_.get(), &RobotController::navigationProgressChanged,
+            d_->navigation_panel_.get(), &NavigationPanel::onNavigationProgressChanged);
+    connect(d_->robot_controller_.get(), &RobotController::navigationStatusChanged,
+            d_->navigation_panel_.get(), &NavigationPanel::onNavigationStatusChanged);
+    connect(d_->robot_controller_.get(), &RobotController::goalSet,
+            d_->navigation_panel_.get(), [this](const geometry_msgs::PoseStamped& goal) {
+                ROS_INFO("Goal set signal received in MainWindow");
+                if (d_->navigation_panel_) {
+                    d_->navigation_panel_->onNavigationStateChanged("就绪");
+                    ROS_INFO("Navigation state updated to '就绪'");
+                }
+            });
+    ROS_INFO("Connected RobotController signals");
+
+    // 设置 RVizView 到 NavigationPanel
+    d_->navigation_panel_->setRVizView(d_->rviz_view_);
+    ROS_INFO("Set RVizView to NavigationPanel");
+
+    // 连接工具栏按钮信号
+    connect(d_->navigation_panel_.get(), &NavigationPanel::startNavigationClicked,
+            d_->robot_controller_.get(), &RobotController::startNavigation);
+    connect(d_->navigation_panel_.get(), &NavigationPanel::stopNavigationClicked,
+            d_->robot_controller_.get(), &RobotController::stopNavigation);
+    connect(d_->navigation_panel_.get(), &NavigationPanel::pauseNavigationClicked,
+            d_->robot_controller_.get(), &RobotController::pauseNavigation);
+    ROS_INFO("Connected navigation control signals");
+
+    ROS_INFO("All connections set up in MainWindow");
 } 

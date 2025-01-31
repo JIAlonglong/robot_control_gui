@@ -4,6 +4,7 @@
 #include <memory>
 #include <map>
 #include "ros/robot_controller.h"
+#include "ui/goal_setting_dialog.h"
 
 class QLabel;
 class QPushButton;
@@ -22,11 +23,7 @@ public:
 
     void setRVizView(const std::shared_ptr<RVizView>& rviz_view);
 
-protected:
-    void keyPressEvent(QKeyEvent* event) override;
-    void keyReleaseEvent(QKeyEvent* event) override;
-
-private slots:
+public slots:
     void onSetInitialPose();
     void onAutoLocalization();
     void onSetGoal();
@@ -34,18 +31,32 @@ private slots:
     void onStartNavigation();
     void onPauseNavigation();
     void onStopNavigation();
+    void onEmergencyStop();
+    void onPlannerSettings();
     void onNavigationModeChanged(int index);
-    void onNavigationStateChanged(RobotController::NavigationState state);
-    void onLocalizationStateChanged(bool is_localized);
+    void onLocalizationStateChanged(const QString& state);
     void onLocalizationProgressChanged(double progress);
+    void onNavigationStateChanged(const QString& state);
     void onNavigationProgressChanged(double progress);
+    void onNavigationStatusChanged(const QString& status);
+    void updateLocalizationStatus(const QString& status);
     void onDistanceToGoalChanged(double distance);
     void onEstimatedTimeToGoalChanged(double time);
-    void updateLocalizationStatus(const QString& status);
     void updateVelocityDisplay(double linear, double angular);
-    void onEmergencyStop();
     void onJoystickMoved();
-    void onPlannerSettings();
+
+signals:
+    void localizationStateChanged(const QString& state);
+    void localizationStatusChanged(const QString& status);
+    void localizationProgressChanged(double progress);
+    void startNavigationClicked();
+    void stopNavigationClicked();
+    void pauseNavigationClicked();
+    void resumeNavigationClicked();
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
 
 private:
     void setupUi();
@@ -59,9 +70,4 @@ private:
     class NavigationPanelPrivate;
     std::unique_ptr<NavigationPanelPrivate> d_ptr;
     std::shared_ptr<RobotController> robot_controller_;
-
-signals:
-    void localizationStateChanged(bool is_localized);
-    void localizationStatusChanged(const QString& status);
-    void localizationProgressChanged(double progress);
 }; 

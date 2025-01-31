@@ -38,6 +38,7 @@ public:
     QToolBar* tool_bar_{nullptr};
     QDockWidget* display_options_dock_{nullptr};
     QStackedWidget* stacked_widget_{nullptr};
+    QLabel* status_label_{nullptr};
     std::shared_ptr<SpeedDashboard> speed_dashboard_;
 
     std::shared_ptr<RobotController> robot_controller_;
@@ -83,17 +84,22 @@ private slots:
     void onAngularJoystickMoved(double x, double y);
 
 private:
+    // UI 设置相关
     void setupUi();
     void createToolBar();
     void createDisplayOptionsPanel();
-    void createFloatingControlPanel();
-    void connectSignals();
+    void setupConnections();
+
+    // ROS 相关
     void setupSubscribers();
     void setupRosConnections();
+    
+    // 控制相关
     void updateKeyboardControl();
     void updateRobotState();
     void updateRobotVelocity();
 
+    // ROS 回调函数
     void handleMapUpdate(const nav_msgs::OccupancyGridConstPtr& msg);
     void handleOdomUpdate(const nav_msgs::OdometryConstPtr& msg);
     void handleScanUpdate(const sensor_msgs::LaserScanConstPtr& msg);
