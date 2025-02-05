@@ -19,6 +19,7 @@
 #include <OGRE/OgreQuaternion.h>
 #include <ros/ros.h>
 #include "ros/robot_controller.h"
+#include <rviz/viewport_mouse_event.h>
 
 class RVizView : public QWidget {
     Q_OBJECT
@@ -35,28 +36,30 @@ public:
     void updateRobotPose(const nav_msgs::OdometryConstPtr& odom);
     void updateLaserScan(const sensor_msgs::LaserScanConstPtr& scan);
     void updatePath(const std::vector<geometry_msgs::PoseStamped>& poses);
-    void setRobotController(std::shared_ptr<RobotController> controller) { robot_controller_ = controller; }
+    void setRobotController(std::shared_ptr<RobotController> controller);
     void activateGoalTool();
     void activateInitialPoseTool();
 
 public slots:
     void onGoalToolActivated();
-    void onGoalToolDeactivated();
     void onInitialPoseToolActivated();
-    void onGoalPositionSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation);
+    void onCurrentToolChanged(rviz::Tool* tool);
+    void onGoalPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation);
     void onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation);
 
 signals:
+    void goalToolActivated();
+    void goalToolDeactivated();
     void goalSelected(const geometry_msgs::PoseStamped& goal);
     void initialPoseSelected(const geometry_msgs::PoseWithCovarianceStamped& pose);
     void goalToolStatusChanged(bool active);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
-    void setupGoalTool();
 
 private:
     void cleanup();
+    void setupTools();
     void setupDisplays();
 
     QLabel* status_label_{nullptr};
@@ -70,6 +73,7 @@ private:
     rviz::Display* global_path_display_{nullptr};  // 全局路径显示
     rviz::Display* local_path_display_{nullptr};   // 局部路径显示
     rviz::Display* goal_display_{nullptr};
+    rviz::Tool* move_camera_tool_{nullptr};  // 添加移动相机工具
     rviz::Tool* goal_tool_{nullptr};
     rviz::Tool* initial_pose_tool_{nullptr};
     QMutex mutex_;
