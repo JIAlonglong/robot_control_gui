@@ -1,12 +1,30 @@
 #include "ui/rviz_view.h"
-
-#include <QVBoxLayout>
+#include <QApplication>
 #include <QPainter>
-#include <QPaintEvent>
+#include <QVBoxLayout>
 #include <QTimer>
+#include <QDebug>
 #include <QVariant>
 #include <QThread>
 #include <QMutexLocker>
+#include <QSurfaceFormat>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QToolBar>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
+#include <QIcon>
+#include <QGroupBox>
+#include <QVector3D>
+#include <QWindow>
+#include <QOpenGLWindow>
+#include <QOpenGLWidget>
+#include <stdexcept>
+#include <QMenu>
+#include <QToolButton>
+#include <QButtonGroup>
 
 #include <rviz/display.h>
 #include <rviz/tool.h>
@@ -15,36 +33,143 @@
 #include <rviz/properties/property_tree_model.h>
 #include <rviz/properties/property.h>
 #include <rviz/properties/tf_frame_property.h>
+#include <rviz/visualization_manager.h>
+#include <rviz/render_panel.h>
+#include <rviz/view_manager.h>
+#include <tf2/utils.h>
+
+// 私有实现类
+class Private {
+public:
+    rviz::RenderPanel* render_panel_;
+    rviz::VisualizationManager* manager_;
+    rviz::ToolManager* tool_manager_;
+    rviz::DisplayGroup* display_group_;
+    
+    rviz::Tool* move_camera_tool_;
+    rviz::Tool* goal_tool_;
+    rviz::Tool* initial_pose_tool_;
+    rviz::Tool* select_tool_;
+    rviz::Tool* interact_tool_;
+    rviz::Tool* measure_tool_;
+    rviz::Tool* focus_camera_tool_;
+    rviz::Tool* point_tool_;
+    
+    rviz::Display* global_path_display_;
+    rviz::Display* local_path_display_;
+    rviz::Display* goal_display_;
+    
+    QLabel* status_label_;
+    std::shared_ptr<RobotController> robot_controller_;
+    rviz::Display* robot_model_display_;
+    rviz::Display* map_display_;
+    rviz::Display* laser_scan_display_;
+    rviz::Display* pose_estimate_display_;
+    rviz::Display* global_costmap_display_;
+    rviz::Display* local_costmap_display_;
+    QVBoxLayout* main_layout_;
+    QToolBar* toolbar_;
+    QActionGroup* tool_group_;
+    QTreeWidget* display_tree_;
+
+    Private() 
+        : render_panel_(nullptr)
+        , manager_(nullptr)
+        , tool_manager_(nullptr)
+        , display_group_(nullptr)
+        , move_camera_tool_(nullptr)
+        , goal_tool_(nullptr)
+        , initial_pose_tool_(nullptr)
+        , select_tool_(nullptr)
+        , interact_tool_(nullptr)
+        , measure_tool_(nullptr)
+        , focus_camera_tool_(nullptr)
+        , point_tool_(nullptr)
+        , global_path_display_(nullptr)
+        , local_path_display_(nullptr)
+        , goal_display_(nullptr)
+        , status_label_(nullptr)
+        , robot_controller_(nullptr)
+        , robot_model_display_(nullptr)
+        , map_display_(nullptr)
+        , laser_scan_display_(nullptr)
+        , pose_estimate_display_(nullptr)
+        , global_costmap_display_(nullptr)
+        , local_costmap_display_(nullptr)
+        , main_layout_(nullptr)
+        , toolbar_(nullptr)
+        , tool_group_(nullptr)
+        , display_tree_(nullptr)
+    {}
+
+    ~Private() {
+        if (manager_) {
+            manager_->removeAllDisplays();
+            delete manager_;
+            manager_ = nullptr;
+        }
+        if (render_panel_) {
+            delete render_panel_;
+            render_panel_ = nullptr;
+        }
+    }
+};
 
 RVizView::RVizView(QWidget* parent)
     : QWidget(parent)
-    , render_panel_(nullptr)
-    , manager_(nullptr)
-    , grid_display_(nullptr)
-    , robot_model_display_(nullptr)
-    , map_display_(nullptr)
-    , laser_scan_display_(nullptr)
-    , robot_controller_(nullptr)
+    , d_(std::make_unique<Private>())
 {
-    // 创建布局
-    QVBoxLayout* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    ROS_INFO("创建RVizView...");
+    
+    // 设置基础的OpenGL环境变量
+    qputenv("LIBGL_ALWAYS_SOFTWARE", "1");
+    qputenv("MESA_GL_VERSION_OVERRIDE", "2.1");
+    qputenv("MESA_GLSL_VERSION_OVERRIDE", "120");
+    qputenv("LIBGL_DRI3_DISABLE", "1");
+    qputenv("LIBGL_SWRAST_NO_ASYNC", "1");
+    qputenv("OGRE_RTT_MODE", "Copy");
+    qputenv("OGRE_THREAD_SUPPORT", "0");
 
+    // 设置最基础的OpenGL格式
+    QSurfaceFormat format;
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setVersion(2, 1);
+    format.setProfile(QSurfaceFormat::NoProfile);
+    format.setOption(QSurfaceFormat::DeprecatedFunctions);
+    format.setDepthBufferSize(8);
+    format.setStencilBufferSize(0);
+    format.setSamples(0);
+    format.setSwapBehavior(QSurfaceFormat::SingleBuffer);
+    format.setRedBufferSize(8);
+    format.setGreenBufferSize(8);
+    format.setBlueBufferSize(8);
+    format.setAlphaBufferSize(0);
+    QSurfaceFormat::setDefaultFormat(format);
+
+    // 设置窗口属性
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_NoSystemBackground);
+    setAutoFillBackground(false);
+
+    // 创建主布局
+    d_->main_layout_ = new QVBoxLayout(this);
+    d_->main_layout_->setContentsMargins(0, 0, 0, 0);
+    d_->main_layout_->setSpacing(0);
+    
     // 创建状态标签
-    status_label_ = new QLabel(this);
-    status_label_->setAlignment(Qt::AlignCenter);
-    status_label_->setStyleSheet("QLabel { color: red; }");
-    status_label_->hide();
-    layout->addWidget(status_label_);
+    d_->status_label_ = new QLabel(this);
+    d_->status_label_->setAlignment(Qt::AlignCenter);
+    d_->status_label_->setText(tr("正在初始化RViz..."));
+    d_->status_label_->setStyleSheet("QLabel { background-color: rgba(0, 0, 0, 128); color: white; }");
+    d_->status_label_->hide();
+    d_->main_layout_->addWidget(d_->status_label_);
 
-    // 创建渲染面板
-    render_panel_ = new rviz::RenderPanel();
-    layout->addWidget(render_panel_);
-
-    // 等待ROS初始化完成
-    ros::Duration(0.5).sleep();
-
-    initialize();
+    // 设置大小策略
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMinimumSize(600, 400);
+    
+    // 设置焦点策略
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 RVizView::~RVizView()
@@ -52,431 +177,638 @@ RVizView::~RVizView()
     cleanup();
 }
 
-void RVizView::initialize()
+bool RVizView::initializeOpenGL()
+{
+    return true;  // 简化OpenGL初始化
+}
+
+void RVizView::setupUi()
 {
     try {
-        if (!render_panel_) {
-            throw std::runtime_error("Render panel is null");
+        // 创建渲染面板
+        d_->render_panel_ = new rviz::RenderPanel();
+        if (!d_->render_panel_) {
+            throw std::runtime_error("渲染面板创建失败");
         }
 
+        // 将渲染面板添加到布局之前先检查
+        if (!d_->main_layout_) {
+            throw std::runtime_error("主布局未初始化");
+        }
+        d_->main_layout_->addWidget(d_->render_panel_);
+        
         // 创建可视化管理器
-        manager_ = new rviz::VisualizationManager(render_panel_);
-        if (!manager_) {
-            throw std::runtime_error("Failed to create visualization manager");
+        d_->manager_ = new rviz::VisualizationManager(d_->render_panel_);
+        if (!d_->manager_) {
+            throw std::runtime_error("可视化管理器创建失败");
         }
 
         // 初始化渲染面板
-        render_panel_->initialize(manager_->getSceneManager(), manager_);
-
+        try {
+            d_->render_panel_->initialize(d_->manager_->getSceneManager(), d_->manager_);
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("渲染面板初始化失败: ") + e.what());
+        }
+        
+        // 初始化管理器
+        try {
+            d_->manager_->initialize();
+            d_->manager_->startUpdate();
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("管理器初始化失败: ") + e.what());
+        }
+        
         // 设置固定坐标系
-        manager_->setFixedFrame("map");
-
-        // 初始化工具管理器
-        manager_->initialize();
-
-        // 等待TF树建立
-        ros::Duration(0.1).sleep();
-
-        // 设置工具
-        setupTools();
-
-        // 设置显示组件
-        setupDisplays();
-
-        // 启动渲染
-        manager_->startUpdate();
-
+        d_->manager_->setFixedFrame("map");
+        
+        // 使用最简单的视图控制器
+        d_->manager_->getViewManager()->setCurrentViewControllerType("rviz/TopDownOrtho");
+        
     } catch (const std::exception& e) {
-        ROS_ERROR("Exception in RVizView initialization: %s", e.what());
-        cleanup();
+        ROS_ERROR("初始化失败: %s", e.what());
+        if (d_->status_label_) {
+            d_->status_label_->setText(tr("初始化失败: %1").arg(e.what()));
+        }
         throw;
     }
 }
 
-void RVizView::setupDisplays()
+void RVizView::initialize()
 {
-    if (!manager_) {
-        ROS_ERROR("Visualization manager not initialized");
-        return;
-    }
-
     try {
-        // 创建网格显示
-        grid_display_ = manager_->createDisplay("rviz/Grid", "Grid", true);
-        if (!grid_display_) {
-            ROS_ERROR("Failed to create grid display");
-            return;
-        }
-        grid_display_->setEnabled(true);
-        grid_display_->subProp("Cell Size")->setValue(1.0);
-        grid_display_->subProp("Color")->setValue(QColor(125, 125, 125));
-
-        // 创建机器人模型显示
-        robot_model_display_ = manager_->createDisplay("rviz/RobotModel", "Robot Model", true);
-        if (!robot_model_display_) {
-            ROS_ERROR("Failed to create robot model display");
-            return;
-        }
-        robot_model_display_->setEnabled(true);
-
-        // 创建地图显示
-        map_display_ = manager_->createDisplay("rviz/Map", "Map", true);
-        if (!map_display_) {
-            ROS_ERROR("Failed to create map display");
-            return;
-        }
-        map_display_->setEnabled(true);
-        map_display_->subProp("Topic")->setValue("/map");
-
-        // 创建激光扫描显示
-        laser_scan_display_ = manager_->createDisplay("rviz/LaserScan", "LaserScan", true);
-        if (!laser_scan_display_) {
-            ROS_ERROR("Failed to create laser scan display");
-            return;
-        }
-        laser_scan_display_->setEnabled(true);
-        laser_scan_display_->subProp("Topic")->setValue("/scan");
-        laser_scan_display_->subProp("Size (m)")->setValue(0.05);
-        laser_scan_display_->subProp("Color")->setValue(QColor(255, 0, 0));
-
-        // 等待所有显示组件初始化完成
-        ros::Duration(0.1).sleep();
-
-        ROS_INFO("All displays set up successfully");
-
-    } catch (const std::exception& e) {
-        ROS_ERROR("Exception in setupDisplays: %s", e.what());
-        cleanup();
-    }
-}
-
-void RVizView::cleanup()
-{
-    if (manager_) {
-        manager_->stopUpdate();
+        ROS_INFO("开始初始化RVizView...");
         
-        // 禁用所有显示组件
-        if (grid_display_) {
-            grid_display_->setEnabled(false);
-            grid_display_ = nullptr;
+        // 首先设置UI
+        ROS_INFO("设置RViz UI...");
+        setupUi();
+
+        // 确保渲染面板已创建并初始化
+        if (!d_->render_panel_ || !d_->manager_) {
+            ROS_ERROR("渲染面板或可视化管理器未正确初始化");
+            throw std::runtime_error("组件初始化失败");
         }
-        if (robot_model_display_) {
-            robot_model_display_->setEnabled(false);
-            robot_model_display_ = nullptr;
+        
+        // 创建工具管理器
+        ROS_INFO("创建RViz工具管理器...");
+        d_->tool_manager_ = d_->manager_->getToolManager();
+        if (!d_->tool_manager_) {
+            throw std::runtime_error("无法创建工具管理器");
         }
-        if (map_display_) {
-            map_display_->setEnabled(false);
-            map_display_ = nullptr;
+        
+        // 创建显示组
+        ROS_INFO("创建RViz显示组...");
+        d_->display_group_ = d_->manager_->getRootDisplayGroup();
+        if (!d_->display_group_) {
+            throw std::runtime_error("无法创建显示组");
         }
-        if (laser_scan_display_) {
-            laser_scan_display_->setEnabled(false);
-            laser_scan_display_ = nullptr;
+        
+        // 创建工具
+        ROS_INFO("创建RViz工具...");
+        createTools();
+
+        // 创建显示
+        ROS_INFO("创建RViz显示项...");
+        createDisplays();
+        
+        // 启动更新
+        ROS_INFO("启动RViz更新...");
+        d_->manager_->startUpdate();
+        
+        // 更新相机
+        ROS_INFO("更新RViz相机视角...");
+        updateCamera();
+        
+        // 更新显示状态
+        if (d_->status_label_) {
+            d_->status_label_->setText(tr("RViz初始化完成"));
+            d_->status_label_->hide();
+        }
+        
+        ROS_INFO("RVizView初始化完成");
+        Q_EMIT initializationSucceeded();
+        
+    } catch (const std::exception& e) {
+        ROS_ERROR("RVizView初始化失败: %s", e.what());
+        if (d_->status_label_) {
+            d_->status_label_->setText(tr("初始化失败: %1").arg(e.what()));
+            d_->status_label_->show();
+        }
+        Q_EMIT initializationFailed(QString::fromUtf8(e.what()));
+    }
+}
+
+void RVizView::createDisplays()
+{
+    if (!d_->manager_ || !d_->display_group_) {
+            return;
         }
 
-        // 删除管理器会自动清理所有显示组件
-        delete manager_;
-        manager_ = nullptr;
+    // 创建机器人模型显示
+    d_->robot_model_display_ = d_->manager_->createDisplay("rviz/RobotModel", "机器人模型", true);
+    if (d_->robot_model_display_) {
+        d_->robot_model_display_->subProp("Robot Description")->setValue("robot_description");
     }
 
-    if (render_panel_) {
-        delete render_panel_;
-        render_panel_ = nullptr;
-    }
-}
-
-void RVizView::setRobotModel(const QString& model)
-{
-    QMutexLocker locker(&mutex_);
-    
-    if (robot_model_display_) {
-        try {
-            robot_model_display_->subProp("Robot Description")->setValue(model);
-        } catch (const std::exception& e) {
-            ROS_ERROR("Failed to set robot model: %s", e.what());
-        }
-    }
-}
-
-void RVizView::setFixedFrame(const QString& frame)
-{
-    if (manager_) {
-        manager_->setFixedFrame(frame);
-    }
-}
-
-void RVizView::setTargetFrame(const QString& frame)
-{
-    if (manager_) {
-        // 设置目标帧
-        if (robot_model_display_) {
-            robot_model_display_->subProp("Target Frame")->setValue(frame);
-        }
-    }
-}
-
-void RVizView::setDisplayEnabled(const QString& display_name, bool enabled)
-{
-    rviz::Display* display = nullptr;
-    
-    if (display_name == "Grid") {
-        display = grid_display_;
-    } else if (display_name == "RobotModel") {
-        display = robot_model_display_;
-    } else if (display_name == "Map") {
-        display = map_display_;
-    } else if (display_name == "LaserScan") {
-        display = laser_scan_display_;
-    } else if (display_name == "GlobalPath") {
-        display = global_path_display_;
-    } else if (display_name == "LocalPath") {
-        display = local_path_display_;
+    // 创建地图显示
+    d_->map_display_ = d_->manager_->createDisplay("rviz/Map", "地图", true);
+    if (d_->map_display_) {
+        d_->map_display_->subProp("Topic")->setValue("/map");
     }
 
-    if (display) {
-        display->setEnabled(enabled);
+    // 创建激光扫描显示
+    d_->laser_scan_display_ = d_->manager_->createDisplay("rviz/LaserScan", "激光扫描", true);
+    if (d_->laser_scan_display_) {
+        d_->laser_scan_display_->subProp("Topic")->setValue("/scan");
     }
-}
 
-void RVizView::updateMap(const nav_msgs::OccupancyGridConstPtr& map)
-{
-    QMutexLocker locker(&mutex_);
-    if (map_display_) {
-        map_display_->setEnabled(true);
+    // 创建全局路径显示
+    d_->global_path_display_ = d_->manager_->createDisplay("rviz/Path", "全局路径", true);
+    if (d_->global_path_display_) {
+        d_->global_path_display_->subProp("Topic")->setValue("/move_base/NavfnROS/plan");
+        d_->global_path_display_->subProp("Color")->setValue(QColor(0, 255, 0));
     }
-}
 
-void RVizView::updateRobotPose(const nav_msgs::OdometryConstPtr& odom)
-{
-    QMutexLocker locker(&mutex_);
-    if (robot_model_display_) {
-        robot_model_display_->setEnabled(true);
+    // 创建局部路径显示
+    d_->local_path_display_ = d_->manager_->createDisplay("rviz/Path", "局部路径", true);
+    if (d_->local_path_display_) {
+        d_->local_path_display_->subProp("Topic")->setValue("/move_base/DWAPlannerROS/local_plan");
+        d_->local_path_display_->subProp("Color")->setValue(QColor(255, 0, 0));
     }
-}
 
-void RVizView::updateLaserScan(const sensor_msgs::LaserScanConstPtr& scan)
-{
-    QMutexLocker locker(&mutex_);
-    if (laser_scan_display_) {
-        laser_scan_display_->setEnabled(true);
+    // 创建位姿估计显示
+    d_->pose_estimate_display_ = d_->manager_->createDisplay("rviz/PoseArray", "位姿估计", true);
+    if (d_->pose_estimate_display_) {
+        d_->pose_estimate_display_->subProp("Topic")->setValue("/particlecloud");
     }
-}
 
-void RVizView::updatePath(const std::vector<geometry_msgs::PoseStamped>& poses)
-{
-    QMutexLocker locker(&mutex_);
-    if (global_path_display_) {
-        global_path_display_->setEnabled(!poses.empty());
+    // 创建全局代价地图显示
+    d_->global_costmap_display_ = d_->manager_->createDisplay("rviz/Map", "全局代价地图", true);
+    if (d_->global_costmap_display_) {
+        d_->global_costmap_display_->subProp("Topic")->setValue("/move_base/global_costmap/costmap");
+        d_->global_costmap_display_->subProp("Color Scheme")->setValue("costmap");
     }
-    if (local_path_display_) {
-        local_path_display_->setEnabled(!poses.empty());
+
+    // 创建局部代价地图显示
+    d_->local_costmap_display_ = d_->manager_->createDisplay("rviz/Map", "局部代价地图", true);
+    if (d_->local_costmap_display_) {
+        d_->local_costmap_display_->subProp("Topic")->setValue("/move_base/local_costmap/costmap");
+        d_->local_costmap_display_->subProp("Color Scheme")->setValue("costmap");
     }
 }
 
 void RVizView::paintEvent(QPaintEvent* event)
 {
-    QWidget::paintEvent(event);
-    if (status_label_ && status_label_->isVisible()) {
+    Q_UNUSED(event)
+    if (!d_->render_panel_) {
         QPainter painter(this);
-        painter.fillRect(rect(), QColor(0, 0, 0, 128));
+        painter.fillRect(rect(), Qt::black);
+        if (d_->status_label_) {
+            d_->status_label_->setGeometry(0, height() / 2 - 20, width(), 40);
+            d_->status_label_->show();
+        }
     }
 }
 
-void RVizView::setupTools()
+void RVizView::resizeEvent(QResizeEvent* event)
 {
-    if (!manager_) {
-        ROS_ERROR("Visualization manager not initialized");
+    QWidget::resizeEvent(event);
+    if (d_->render_panel_) {
+        d_->render_panel_->resize(size());
+    }
+    if (d_->status_label_) {
+        d_->status_label_->setGeometry(0, height() / 2 - 20, width(), 40);
+    }
+}
+
+void RVizView::updateDisplays()
+{
+    if (!d_->manager_ || !d_->display_group_) return;
+
+    try {
+        // 更新所有显示组件
+        for (int i = 0; i < d_->display_group_->numDisplays(); ++i) {
+            if (auto* display = d_->display_group_->getDisplayAt(i)) {
+                display->update(0, 0);
+            }
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "更新显示组件失败:" << e.what();
+    }
+}
+
+void RVizView::updateCamera()
+{
+    if (!d_->manager_) {
         return;
     }
 
+    // 获取视图管理器
+    rviz::ViewManager* view_manager = d_->manager_->getViewManager();
+    if (!view_manager) {
+        return;
+    }
+
+    // 获取当前视图
+    rviz::ViewController* current_view = view_manager->getCurrent();
+    if (!current_view) {
+            return;
+        }
+
+    // 设置视图属性
+    current_view->subProp("X")->setValue(0);
+    current_view->subProp("Y")->setValue(0);
+    current_view->subProp("Scale")->setValue(50);
+    
+    // 设置焦点位置
+    if (auto* focal_point = current_view->subProp("Focal Point")) {
+        focal_point->subProp("X")->setValue(0.0);
+        focal_point->subProp("Y")->setValue(0.0);
+        focal_point->subProp("Z")->setValue(0.0);
+    }
+}
+
+void RVizView::handleMouseEvent(rviz::ViewportMouseEvent& event)
+{
+    if (!d_->manager_ || !d_->tool_manager_) return;
+
     try {
-        // 创建移动相机工具
-        move_camera_tool_ = manager_->getToolManager()->addTool("rviz/MoveCamera");
-        if (!move_camera_tool_) {
-            ROS_ERROR("Failed to create move camera tool");
-            return;
+        if (auto* current_tool = d_->tool_manager_->getCurrentTool()) {
+            current_tool->processMouseEvent(event);
         }
-        manager_->getToolManager()->setCurrentTool(move_camera_tool_);
-        ROS_INFO("Move camera tool created and set as current");
-
-        // 创建目标点工具
-        goal_tool_ = manager_->getToolManager()->addTool("rviz/SetGoal");
-        if (!goal_tool_) {
-            ROS_ERROR("Failed to create goal tool");
-            return;
-        }
-        ROS_INFO("Goal tool created successfully");
-
-        // 清除目标点工具的话题
-        goal_tool_->getPropertyContainer()->subProp("Topic")->setValue("");
-        ROS_INFO("Goal tool topic cleared");
-
-        // 创建初始位姿工具
-        initial_pose_tool_ = manager_->getToolManager()->addTool("rviz/SetInitialPose");
-        if (!initial_pose_tool_) {
-            ROS_ERROR("Failed to create initial pose tool");
-            return;
-        }
-        ROS_INFO("Initial pose tool created successfully");
-
-        // 设置初始位姿工具的话题
-        initial_pose_tool_->getPropertyContainer()->subProp("Topic")->setValue("/initialpose");
-        ROS_INFO("Initial pose tool topic set to /initialpose");
-
     } catch (const std::exception& e) {
-        ROS_ERROR("Exception in setupTools: %s", e.what());
-        cleanup();
+        qWarning() << "处理鼠标事件失败:" << e.what();
     }
 }
 
 void RVizView::onGoalToolActivated()
 {
-    ROS_INFO("Goal tool activated in RVizView");
-    emit goalToolActivated();
+    if (d_->goal_tool_) {
+        d_->tool_manager_->setCurrentTool(d_->goal_tool_);
+        Q_EMIT goalToolStatusChanged(true);
+    }
 }
 
 void RVizView::onInitialPoseToolActivated()
 {
-    ROS_INFO("Initial pose tool activated in RVizView");
-    if (!manager_) {
-        ROS_ERROR("Visualization manager not initialized");
-        return;
-    }
-
-    // 获取工具管理器
-    rviz::ToolManager* tool_manager = manager_->getToolManager();
-    if (!tool_manager) {
-        ROS_ERROR("Tool manager not available");
-        return;
-    }
-
-    // 查找并激活初始位姿工具
-    for (int i = 0; i < tool_manager->numTools(); i++) {
-        rviz::Tool* tool = tool_manager->getTool(i);
-        if (tool && tool->getClassId() == "rviz/SetInitialPose") {
-            tool_manager->setCurrentTool(tool);
-            ROS_INFO("Initial pose tool found and activated");
-            break;
-        }
-    }
-}
-
-void RVizView::onGoalPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
-{
-    ROS_INFO("Goal pose selected in RVizView");
-    
-    QMutexLocker locker(&mutex_);
-    if (!robot_controller_) {
-        ROS_ERROR("Robot controller not initialized, ignoring goal pose selection");
-        return;
-    }
-    
-    geometry_msgs::PoseStamped goal;
-    goal.header.frame_id = "map";
-    goal.header.stamp = ros::Time::now();
-    
-    // 转换Ogre类型到geometry_msgs类型
-    goal.pose.position.x = position.x;
-    goal.pose.position.y = position.y;
-    goal.pose.position.z = position.z;
-    goal.pose.orientation.x = orientation.x;
-    goal.pose.orientation.y = orientation.y;
-    goal.pose.orientation.z = orientation.z;
-    goal.pose.orientation.w = orientation.w;
-
-    try {
-        robot_controller_->setNavigationGoal(goal);
-        ROS_INFO("Navigation goal set successfully");
-    } catch (const std::exception& e) {
-        ROS_ERROR("Failed to set navigation goal: %s", e.what());
-    }
-    
-    // 切换回移动相机工具
-    if (manager_ && manager_->getToolManager() && move_camera_tool_) {
-        manager_->getToolManager()->setCurrentTool(move_camera_tool_);
-        ROS_INFO("Switched back to MoveCamera tool");
-    }
-}
-
-void RVizView::onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
-{
-    ROS_INFO("Initial pose selected in RVizView");
-    
-    QMutexLocker locker(&mutex_);
-    if (!robot_controller_) {
-        ROS_ERROR("Robot controller not initialized, ignoring initial pose selection");
-        return;
-    }
-
-    geometry_msgs::PoseWithCovarianceStamped pose_with_cov;
-    pose_with_cov.header.frame_id = "map";
-    pose_with_cov.header.stamp = ros::Time::now();
-    
-    // 转换Ogre类型到geometry_msgs类型
-    pose_with_cov.pose.pose.position.x = position.x;
-    pose_with_cov.pose.pose.position.y = position.y;
-    pose_with_cov.pose.pose.position.z = position.z;
-    pose_with_cov.pose.pose.orientation.x = orientation.x;
-    pose_with_cov.pose.pose.orientation.y = orientation.y;
-    pose_with_cov.pose.pose.orientation.z = orientation.z;
-    pose_with_cov.pose.pose.orientation.w = orientation.w;
-
-    // 设置协方差矩阵
-    for (int i = 0; i < 36; i++) {
-        pose_with_cov.pose.covariance[i] = 0.0;
-    }
-    // 设置对角线元素
-    pose_with_cov.pose.covariance[0] = 0.25;  // x
-    pose_with_cov.pose.covariance[7] = 0.25;  // y
-    pose_with_cov.pose.covariance[35] = 0.06853891945200942; // yaw
-
-    try {
-        robot_controller_->setInitialPose(pose_with_cov);
-        ROS_INFO("Initial pose set successfully");
-        emit initialPoseSelected(pose_with_cov);
-    } catch (const std::exception& e) {
-        ROS_ERROR("Failed to set initial pose: %s", e.what());
-    }
-}
-
-void RVizView::activateGoalTool()
-{
-    if (manager_ && manager_->getToolManager() && goal_tool_) {
-        manager_->getToolManager()->setCurrentTool(goal_tool_);
-    ROS_INFO("Goal tool activated");
-    } else {
-        ROS_ERROR("Failed to activate goal tool: manager=%p, tool_manager=%p, goal_tool=%p",
-                  manager_, 
-                  manager_ ? manager_->getToolManager() : nullptr,
-                  goal_tool_);
-    }
-}
-
-void RVizView::activateInitialPoseTool()
-{
-    if (manager_ && manager_->getToolManager() && initial_pose_tool_) {
-        manager_->getToolManager()->setCurrentTool(initial_pose_tool_);
-    ROS_INFO("Initial pose tool activated");
-    } else {
-        ROS_ERROR("Failed to activate initial pose tool");
+    if (d_->initial_pose_tool_) {
+        d_->tool_manager_->setCurrentTool(d_->initial_pose_tool_);
     }
 }
 
 void RVizView::onCurrentToolChanged(rviz::Tool* tool)
 {
-    if (tool == goal_tool_) {
-        onGoalToolActivated();
-        emit goalToolStatusChanged(true);
-    } else if (tool == move_camera_tool_) {
-        // 如果切换到移动相机工具，说明其他工具被停用
-        if (manager_->getToolManager()->getCurrentTool() != goal_tool_) {
-            emit goalToolStatusChanged(false);
-        }
+    if (tool == d_->goal_tool_) {
+        Q_EMIT goalToolStatusChanged(true);
+    } else {
+        Q_EMIT goalToolStatusChanged(false);
     }
-    ROS_INFO("Current tool changed to: %s", tool ? tool->getName().toStdString().c_str() : "null");
 }
 
-void RVizView::setRobotController(std::shared_ptr<RobotController> controller)
+void RVizView::setRobotController(const std::shared_ptr<RobotController>& controller)
 {
-    QMutexLocker locker(&mutex_);
-    robot_controller_ = controller;
+    d_->robot_controller_ = controller;
+}
+
+void RVizView::onGoalPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
+{
+    if (!d_->robot_controller_) {
+        return;
+    }
+    
+    double yaw = tf2::getYaw(tf2::Quaternion(
+        orientation.x,
+        orientation.y,
+        orientation.z,
+        orientation.w
+    ));
+
+    Q_EMIT goalPoseSelected(position.x, position.y, yaw);
+}
+
+void RVizView::onInitialPoseSelected(const Ogre::Vector3& position, const Ogre::Quaternion& orientation)
+{
+    if (!d_->robot_controller_) {
+        return;
+    }
+
+    double yaw = tf2::getYaw(tf2::Quaternion(
+        orientation.x,
+        orientation.y,
+        orientation.z,
+        orientation.w
+    ));
+
+    Q_EMIT initialPoseSelected(position.x, position.y, yaw);
+}
+
+void RVizView::activateGoalTool()
+{
+    try {
+        if (d_->manager_ && d_->tool_manager_ && d_->goal_tool_) {
+            d_->tool_manager_->setCurrentTool(d_->goal_tool_);
+            qInfo() << "目标点工具已激活";
+    } else {
+            qWarning() << QString("激活目标点工具失败: manager=%1, tool_manager=%2, goal_tool=%3")
+                .arg(d_->manager_ ? "valid" : "null")
+                .arg((d_->manager_ && d_->tool_manager_) ? "valid" : "null")
+                .arg(d_->goal_tool_ ? "valid" : "null");
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "激活目标点工具失败:" << e.what();
+    }
+}
+
+void RVizView::activateInitialPoseTool()
+{
+    try {
+        if (d_->manager_ && d_->tool_manager_ && d_->initial_pose_tool_) {
+            d_->tool_manager_->setCurrentTool(d_->initial_pose_tool_);
+            qInfo() << "初始位姿工具已激活";
+    } else {
+            qWarning() << "激活初始位姿工具失败";
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "激活初始位姿工具失败:" << e.what();
+    }
+}
+
+void RVizView::visualizeFrontier(const geometry_msgs::Point& frontier) {
+    if (!d_->manager_) return;
+
+    // 创建一个Marker用于显示frontier点
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = ros::Time::now();
+    marker.ns = "frontiers";
+    marker.id = 0;
+    marker.type = visualization_msgs::Marker::SPHERE;
+    marker.action = visualization_msgs::Marker::ADD;
+    
+    marker.pose.position = frontier;
+    marker.pose.orientation.w = 1.0;
+    
+    marker.scale.x = 0.2;
+    marker.scale.y = 0.2;
+    marker.scale.z = 0.2;
+    
+    marker.color.r = 1.0;
+    marker.color.g = 0.0;
+    marker.color.b = 0.0;
+    marker.color.a = 1.0;
+    
+    marker.lifetime = ros::Duration(5.0);
+
+    // 发布marker
+    static ros::NodeHandle nh;
+    static ros::Publisher marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 1);
+    marker_pub.publish(marker);
+}
+
+void RVizView::cleanup()
+{
+    ROS_INFO("开始清理RVizView...");
+    
+    // 停止更新
+    if (d_->manager_) {
+        d_->manager_->stopUpdate();
+    }
+    
+    // 清理显示组
+    if (d_->display_group_) {
+        d_->display_group_->removeAllDisplays();
+        d_->display_group_ = nullptr;
+    }
+    
+    // 清理工具管理器
+    if (d_->tool_manager_) {
+        d_->tool_manager_ = nullptr;
+    }
+    
+    // 清理渲染面板
+    if (d_->render_panel_) {
+        delete d_->render_panel_;
+        d_->render_panel_ = nullptr;
+    }
+    
+    // 清理可视化管理器
+    if (d_->manager_) {
+        delete d_->manager_;
+        d_->manager_ = nullptr;
+    }
+    
+    ROS_INFO("RVizView清理完成");
+}
+
+void RVizView::onDisplayTreeItemChanged(QTreeWidgetItem* item, int column)
+{
+    if (!item || column != 0) {
+        return;
+    }
+
+    QString text = item->text(0);
+    bool checked = item->checkState(0) == Qt::Checked;
+
+    if (text == tr("机器人模型")) {
+        showRobotModel(checked);
+    } else if (text == tr("地图")) {
+        showMap(checked);
+    } else if (text == tr("激光扫描")) {
+        showLaserScan(checked);
+    } else if (text == tr("路径")) {
+        showPath(checked);
+    } else if (text == tr("位姿估计")) {
+        showPoseEstimate(checked);
+    }
+}
+
+void RVizView::showRobotModel(bool show)
+{
+    if (d_->robot_model_display_) {
+        d_->robot_model_display_->setEnabled(show);
+    }
+}
+
+void RVizView::showMap(bool show)
+{
+    if (d_->map_display_) {
+        d_->map_display_->setEnabled(show);
+    }
+}
+
+void RVizView::showLaserScan(bool show)
+{
+    if (d_->laser_scan_display_) {
+        d_->laser_scan_display_->setEnabled(show);
+    }
+}
+
+void RVizView::showPath(bool show)
+{
+    if (d_->global_path_display_) {
+        d_->global_path_display_->setEnabled(show);
+    }
+    if (d_->local_path_display_) {
+        d_->local_path_display_->setEnabled(show);
+    }
+}
+
+void RVizView::showPoseEstimate(bool show)
+{
+    if (d_->pose_estimate_display_) {
+        d_->pose_estimate_display_->setEnabled(show);
+    }
+}
+
+void RVizView::createTools()
+{
+    if (!d_->manager_ || !d_->tool_manager_) {
+            return;
+        }
+
+    // 创建移动相机工具
+    d_->move_camera_tool_ = d_->tool_manager_->addTool("rviz/MoveCamera");
+    d_->move_camera_tool_->setName("移动相机");
+
+    // 创建目标点工具
+    d_->goal_tool_ = d_->tool_manager_->addTool("rviz/SetGoal");
+    d_->goal_tool_->setName("设置目标点");
+
+    // 创建初始位姿工具
+    d_->initial_pose_tool_ = d_->tool_manager_->addTool("rviz/SetInitialPose");
+    d_->initial_pose_tool_->setName("设置初始位姿");
+
+    // 创建选择工具
+    d_->select_tool_ = d_->tool_manager_->addTool("rviz/Select");
+    d_->select_tool_->setName("选择");
+
+    // 创建交互工具
+    d_->interact_tool_ = d_->tool_manager_->addTool("rviz/Interact");
+    d_->interact_tool_->setName("交互");
+
+    // 创建测量工具
+    d_->measure_tool_ = d_->tool_manager_->addTool("rviz/Measure");
+    d_->measure_tool_->setName("测量");
+
+    // 设置默认工具
+    d_->tool_manager_->setCurrentTool(d_->move_camera_tool_);
+}
+
+void RVizView::createToolBar()
+{
+    d_->toolbar_ = new QToolBar(this);
+    d_->main_layout_->addWidget(d_->toolbar_);
+    
+    // 视角控制
+    auto* view_menu = new QMenu(tr("视角"), this);
+    view_menu->addAction(tr("俯视图"), this, [this]() {
+        if(d_->manager_) {
+            auto* view = d_->manager_->getViewManager()->getCurrent();
+            if(view) {
+                view->subProp("Angle")->setValue(0);
+                view->subProp("Distance")->setValue(10);
+            }
+        }
+    });
+    
+    view_menu->addAction(tr("侧视图"), this, [this]() {
+        if(d_->manager_) {
+            auto* view = d_->manager_->getViewManager()->getCurrent();
+            if(view) {
+                view->subProp("Angle")->setValue(90);
+                view->subProp("Distance")->setValue(10);
+            }
+        }
+    });
+    
+    view_menu->addAction(tr("跟随机器人"), this, [this]() {
+        if(d_->manager_) {
+            auto* view = d_->manager_->getViewManager()->getCurrent();
+            if(view) {
+                view->subProp("Target Frame")->setValue("base_link");
+                view->subProp("Distance")->setValue(5);
+            }
+        }
+    });
+    
+    auto* view_button = new QToolButton(this);
+    view_button->setMenu(view_menu);
+    view_button->setPopupMode(QToolButton::InstantPopup);
+    view_button->setText(tr("视角"));
+    view_button->setToolTip(tr("切换视角"));
+    d_->toolbar_->addWidget(view_button);
+    
+    d_->toolbar_->addSeparator();
+    
+    // 显示选项
+    auto* robot_action = d_->toolbar_->addAction(tr("机器人模型"));
+    robot_action->setCheckable(true);
+    robot_action->setChecked(true);
+    connect(robot_action, &QAction::toggled, this, &RVizView::showRobotModel);
+    
+    auto* laser_action = d_->toolbar_->addAction(tr("激光扫描"));
+    laser_action->setCheckable(true);
+    laser_action->setChecked(true);
+    connect(laser_action, &QAction::toggled, this, &RVizView::showLaserScan);
+    
+    auto* map_action = d_->toolbar_->addAction(tr("地图"));
+    map_action->setCheckable(true);
+    map_action->setChecked(true);
+    connect(map_action, &QAction::toggled, this, &RVizView::showMap);
+    
+    auto* path_action = d_->toolbar_->addAction(tr("路径"));
+    path_action->setCheckable(true);
+    path_action->setChecked(true);
+    connect(path_action, &QAction::toggled, this, &RVizView::showPath);
+    
+    auto* costmap_action = d_->toolbar_->addAction(tr("代价地图"));
+    costmap_action->setCheckable(true);
+    costmap_action->setChecked(false);
+    connect(costmap_action, &QAction::toggled, this, [this](bool checked) {
+        if(d_->global_costmap_display_) {
+            d_->global_costmap_display_->setEnabled(checked);
+        }
+        if(d_->local_costmap_display_) {
+            d_->local_costmap_display_->setEnabled(checked);
+        }
+    });
+    
+    d_->toolbar_->addSeparator();
+    
+    // 交互工具
+    auto* pose_tool = d_->toolbar_->addAction(tr("设置初始位姿"));
+    pose_tool->setCheckable(true);
+    connect(pose_tool, &QAction::triggered, this, [this]() {
+        if(d_->tool_manager_) {
+            d_->tool_manager_->setCurrentTool(d_->initial_pose_tool_);
+        }
+    });
+    
+    auto* goal_tool = d_->toolbar_->addAction(tr("设置目标点"));
+    goal_tool->setCheckable(true);
+    connect(goal_tool, &QAction::triggered, this, [this]() {
+        if(d_->tool_manager_) {
+            d_->tool_manager_->setCurrentTool(d_->goal_tool_);
+        }
+    });
+    
+    auto* measure_tool = d_->toolbar_->addAction(tr("测量"));
+    measure_tool->setCheckable(true);
+    connect(measure_tool, &QAction::triggered, this, [this]() {
+        if(d_->tool_manager_) {
+            d_->tool_manager_->setCurrentTool(d_->measure_tool_);
+        }
+    });
+    
+    // 将所有工具按钮加入按钮组
+    d_->tool_group_ = new QButtonGroup(this);
+    d_->tool_group_->setExclusive(true);
+    
+    for(auto* action : d_->toolbar_->actions()) {
+        if(action->isCheckable()) {
+            auto* button = qobject_cast<QToolButton*>(d_->toolbar_->widgetForAction(action));
+            if(button) {
+                d_->tool_group_->addButton(button);
+            }
+        }
+    }
 } 

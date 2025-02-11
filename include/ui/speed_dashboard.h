@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef ROBOT_CONTROL_GUI_SPEED_DASHBOARD_H
 #define ROBOT_CONTROL_GUI_SPEED_DASHBOARD_H
 
@@ -12,20 +14,34 @@ public:
     explicit SpeedDashboard(QWidget* parent = nullptr);
     ~SpeedDashboard() override;
 
-public slots:
+    double linearSpeed() const;
+    double angularSpeed() const;
+
+public Q_SLOTS:
     void setLinearSpeed(double speed);
     void setAngularSpeed(double speed);
+    void setMaxLinearSpeed(double speed);
+    void setMaxAngularSpeed(double speed);
+
+Q_SIGNALS:
+    void linearSpeedChanged(double speed);
+    void angularSpeedChanged(double speed);
+    void maxLinearSpeedChanged(double speed);
+    void maxAngularSpeedChanged(double speed);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
-    void setupUi();
+    void updateDisplay();
+    void drawBackground(QPainter* painter);
+    void drawScale(QPainter* painter);
+    void drawNeedle(QPainter* painter);
+    void drawLabels(QPainter* painter);
 
-    double current_linear_speed_{0.0};
-    double current_angular_speed_{0.0};
-    const double max_linear_speed_{1.0};   // m/s
-    const double max_angular_speed_{1.0};  // rad/s
+    struct Private;
+    std::unique_ptr<Private> d_;
 };
 
 #endif // ROBOT_CONTROL_GUI_SPEED_DASHBOARD_H 

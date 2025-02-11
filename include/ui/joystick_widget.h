@@ -1,8 +1,8 @@
-#ifndef ROBOT_CONTROL_GUI_JOYSTICK_WIDGET_H
-#define ROBOT_CONTROL_GUI_JOYSTICK_WIDGET_H
+#pragma once
 
 #include <QWidget>
-#include <QPoint>
+#include <QPointF>
+#include <memory>
 
 class JoystickWidget : public QWidget
 {
@@ -10,13 +10,16 @@ class JoystickWidget : public QWidget
 
 public:
     explicit JoystickWidget(QWidget* parent = nullptr);
-    ~JoystickWidget() override;
+    ~JoystickWidget();
 
     void reset();
+    QPointF normalizedPosition() const { return normalized_pos_; }
+    double getLinearVelocity() const;
+    double getAngularVelocity() const;
 
-signals:
+Q_SIGNALS:
     void linearJoystickMoved(double x, double y);
-    void angularJoystickMoved(double x, double y);
+    void joystickMoved(double linear, double angular);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -26,14 +29,14 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    void updateJoystickPosition();
+    struct Private;
+    std::unique_ptr<Private> d_;
     QPointF normalizePosition(const QPoint& pos) const;
 
     bool is_pressed_{false};
-    QPoint stick_pos_;
     QPoint center_;
-    int base_radius_{80};  // 底座圆的半径
-    int stick_radius_{20}; // 摇杆圆的半径
-};
-
-#endif // ROBOT_CONTROL_GUI_JOYSTICK_WIDGET_H 
+    QPoint stick_pos_;
+    QPointF normalized_pos_;
+    int base_radius_{50};
+    int stick_radius_{10};
+}; 

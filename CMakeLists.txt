@@ -9,15 +9,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 添加调试标志
 set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fPIC")
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# 启用Qt自动生成
+# OpenGL相关设置
+find_package(OpenGL REQUIRED)
+find_package(GLUT REQUIRED)
+add_definitions(-DQT_NO_OPENGL_ES_2)
+add_definitions(-DFORCE_DESKTOP_OPENGL)
+add_definitions(-DRVIZ_OPENGL_VERSION=21)  # 强制使用OpenGL 2.1
+add_definitions(-DRVIZ_RENDERING_IMPLEMENTATION=RVIZ_RENDERING_IMPLEMENTATION_OGRE)
+add_definitions(-DOGRE_GLSUPPORT_USE_EGL=0)
+
+# Qt相关设置
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
-
-# 设置Qt5路径
-set(Qt5_DIR "/usr/lib/x86_64-linux-gnu/cmake/Qt5")
 
 # 查找所需的包
 find_package(catkin REQUIRED COMPONENTS
@@ -33,41 +39,21 @@ find_package(catkin REQUIRED COMPONENTS
   actionlib
   tf2
   tf2_ros
-  dynamic_reconfigure
-  interactive_markers
   cv_bridge
   image_transport
   rviz
 )
 
+# 查找Qt5
 find_package(Qt5 REQUIRED COMPONENTS
   Core
   Widgets
   Gui
-  OpenGL
   Network
-  PrintSupport
-  Multimedia
-  MultimediaWidgets
+  Qml
+  Script
   SerialPort
-)
-
-# 查找OpenCV
-find_package(OpenCV REQUIRED)
-
-# 设置OGRE的查找路径
-if(NOT DEFINED OGRE_PREFIX_DIR)
-  set(OGRE_PREFIX_DIR "/usr")
-endif()
-
-set(OGRE_INCLUDE_DIRS 
-  ${OGRE_PREFIX_DIR}/include/OGRE
-  ${OGRE_PREFIX_DIR}/include/OGRE/Overlay
-)
-
-set(OGRE_LIBRARIES
-  OgreMain
-  OgreOverlay
+  OpenGL
 )
 
 # 配置catkin包
@@ -94,18 +80,13 @@ catkin_package(
     Qt5Core 
     Qt5Widgets 
     Qt5Gui 
-    Qt5OpenGL 
-    Qt5Network 
-    Qt5PrintSupport 
-    Qt5Multimedia 
-    Qt5MultimediaWidgets 
-    Qt5SerialPort 
-    OpenCV
-    OGRE
+    Qt5Network
+    Qt5Qml
+    Qt5Script
+    Qt5SerialPort
+    OPENGL
+    GLUT
 )
-
-# 添加Qt5编译标志
-add_definitions(-DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB)
 
 # 设置包含目录
 include_directories(
@@ -114,45 +95,57 @@ include_directories(
   ${Qt5Core_INCLUDE_DIRS}
   ${Qt5Widgets_INCLUDE_DIRS}
   ${Qt5Gui_INCLUDE_DIRS}
-  ${Qt5OpenGL_INCLUDE_DIRS}
   ${Qt5Network_INCLUDE_DIRS}
-  ${Qt5PrintSupport_INCLUDE_DIRS}
-  ${Qt5Multimedia_INCLUDE_DIRS}
-  ${Qt5MultimediaWidgets_INCLUDE_DIRS}
+  ${Qt5Qml_INCLUDE_DIRS}
+  ${Qt5Script_INCLUDE_DIRS}
   ${Qt5SerialPort_INCLUDE_DIRS}
-  ${OpenCV_INCLUDE_DIRS}
-  ${OGRE_INCLUDE_DIRS}
-  /usr/include/x86_64-linux-gnu/qt5
-  /usr/include/x86_64-linux-gnu/qt5/QtWidgets
-  /usr/include/x86_64-linux-gnu/qt5/QtGui
-  /usr/include/x86_64-linux-gnu/qt5/QtCore
+  ${Qt5OpenGL_INCLUDE_DIRS}
+  ${OPENGL_INCLUDE_DIRS}
+  ${GLUT_INCLUDE_DIRS}
+  ${tf2_INCLUDE_DIRS}
+  ${tf2_ros_INCLUDE_DIRS}
 )
+
+# 添加Qt编译标志
+add_definitions(${Qt5Widgets_DEFINITIONS})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${Qt5Widgets_EXECUTABLE_COMPILE_FLAGS}")
+
+# 添加编译选项
+add_compile_options(-Wall -Wextra -Wpedantic)
+add_compile_options(-DQT_NO_KEYWORDS)
+add_compile_options(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
+
+# 添加Qt关键字支持
+remove_definitions(-DQT_NO_KEYWORDS)
+add_definitions(-DQT_WIDGETS_LIB)
+add_definitions(-DQT_GUI_LIB)
+add_definitions(-DQT_CORE_LIB)
+
+# 设置Qt的MOC选项
+set(CMAKE_AUTOMOC_MOC_OPTIONS "-DBOOST_TT_HAS_OPERATOR_HPP_INCLUDED")
+
+# 添加tf2依赖
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 # 收集源文件
-file(GLOB_RECURSE QT_SOURCES
-  src/ui/*.cpp
-  src/ros/*.cpp
+file(GLOB_RECURSE SOURCE_FILES
+  src/*.cpp
 )
 
-file(GLOB_RECURSE QT_HEADERS
-  include/ui/*.h
-  include/ros/*.h
+# 收集头文件
+file(GLOB_RECURSE HEADER_FILES
+  include/*.h
 )
 
 # 创建主程序库
-add_library(${PROJECT_NAME} SHARED
-  ${QT_SOURCES}
-  ${QT_HEADERS}
-  src/ros/robot_controller.cpp
-  src/ui/main_window.cpp
-  src/ui/navigation_panel.cpp
-  src/ui/control_panel.cpp
-  src/ui/settings_panel.cpp
-  src/ui/dashboard_window.cpp
-  src/ui/rviz_view.cpp
-  src/ui/planner_settings_dialog.cpp
-  src/ui/goal_setting_dialog.cpp
+add_library(${PROJECT_NAME}
+  ${SOURCE_FILES}
+  ${HEADER_FILES}
 )
+
+# 添加依赖关系
+add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 # 链接主程序库的依赖
 target_link_libraries(${PROJECT_NAME}
@@ -160,55 +153,44 @@ target_link_libraries(${PROJECT_NAME}
   Qt5::Core
   Qt5::Widgets
   Qt5::Gui
-  Qt5::OpenGL
   Qt5::Network
-  Qt5::PrintSupport
-  Qt5::Multimedia
-  Qt5::MultimediaWidgets
+  Qt5::Qml
+  Qt5::Script
   Qt5::SerialPort
-  ${OpenCV_LIBRARIES}
-  ${OGRE_LIBRARIES}
+  Qt5::OpenGL
+  ${OPENGL_LIBRARIES}
+  ${GLUT_LIBRARIES}
+  ${tf2_LIBRARIES}
+  ${tf2_ros_LIBRARIES}
 )
 
 # 创建主程序可执行文件
 add_executable(${PROJECT_NAME}_node src/main.cpp)
+
+# 添加可执行文件的依赖
+add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+# 链接可执行文件
 target_link_libraries(${PROJECT_NAME}_node
   ${PROJECT_NAME}
   ${catkin_LIBRARIES}
-  Qt5::Core
-  Qt5::Widgets
-  Qt5::Gui
-  Qt5::OpenGL
-  Qt5::Network
-  Qt5::PrintSupport
-  Qt5::Multimedia
-  Qt5::MultimediaWidgets
-  Qt5::SerialPort
-  ${OpenCV_LIBRARIES}
-  ${OGRE_LIBRARIES}
 )
 
 # 安装规则
 install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
 
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
   FILES_MATCHING PATTERN "*.h"
-  PATTERN "test_*.h" EXCLUDE
+  PATTERN ".svn" EXCLUDE
 )
 
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
   FILES_MATCHING PATTERN "*.launch"
-)
-
-# 安装资源文件
-install(DIRECTORY resources/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/resources
-  FILES_MATCHING PATTERN "*.png"
-  PATTERN "*.jpg"
 )
 

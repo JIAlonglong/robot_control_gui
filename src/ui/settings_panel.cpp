@@ -1,31 +1,53 @@
 #include "ui/settings_panel.h"
 #include "ros/robot_controller.h"
-#include <QLineEdit>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QLabel>
+#include <QGroupBox>
 #include <QPushButton>
 #include <QComboBox>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
-#include <QLabel>
-#include <QGroupBox>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QCheckBox>
+#include <QtSerialPort/QSerialPortInfo>
 #include <QSettings>
-#include <QDir>
-#include <QSerialPortInfo>
-#include <QHostInfo>
-#include <QNetworkInterface>
 
-SettingsPanel::SettingsPanel(const std::shared_ptr<RobotController>& robot_controller,
-                           QWidget* parent)
+struct SettingsPanel::Private {
+    std::shared_ptr<RobotController> robot_controller;
+    QComboBox* robot_model_combo{nullptr};
+    QComboBox* serial_port_combo{nullptr};
+    QComboBox* baudrate_combo{nullptr};
+    QDoubleSpinBox* max_speed_spin{nullptr};
+    QDoubleSpinBox* max_accel_spin{nullptr};
+    QDoubleSpinBox* safety_distance_spin{nullptr};
+    QSpinBox* update_frequency_spin{nullptr};
+    QCheckBox* auto_connect_check{nullptr};
+    QCheckBox* debug_mode_check{nullptr};
+    QComboBox* planner_type_combo{nullptr};
+    QSpinBox* planning_frequency_spin{nullptr};
+    QDoubleSpinBox* goal_tolerance_spin{nullptr};
+    QPushButton* save_button{nullptr};
+    QPushButton* restore_button{nullptr};
+    QPushButton* refresh_ports_button{nullptr};
+    QVBoxLayout* main_layout{nullptr};
+    QGroupBox* connection_group{nullptr};
+    QGroupBox* planner_group{nullptr};
+    QPushButton* save_settings_button{nullptr};
+    QPushButton* restore_defaults_button{nullptr};
+    QDoubleSpinBox* max_angular_speed_spin{nullptr};
+};
+
+SettingsPanel::SettingsPanel(const std::shared_ptr<RobotController>& controller, QWidget* parent)
     : QWidget(parent)
-    , d_ptr(std::make_unique<SettingsPanelPrivate>())
+    , d_(std::make_unique<Private>())
 {
-    d_ptr->robot_controller = robot_controller;
-    d_ptr->config_file_path = QDir::homePath() + "/.robot_control/settings.ini";
+    d_->robot_controller = controller;
     
     setupUi();
+    connectSignalsAndSlots();
     loadSettings();
 }
 
@@ -33,466 +55,371 @@ SettingsPanel::~SettingsPanel() = default;
 
 void SettingsPanel::setupUi()
 {
-    auto* main_layout = new QVBoxLayout(this);
-    main_layout->setSpacing(20);
+    d_->main_layout = new QVBoxLayout(this);
     
-    // 设置组件样式
-    setStyleSheet(
-        "QGroupBox {"
-        "    border: 1px solid #cccccc;"
-        "    border-radius: 6px;"
-        "    margin-top: 1em;"
-        "    padding: 10px;"
-        "    background-color: #ffffff;"
-        "}"
-        "QGroupBox::title {"
-        "    subcontrol-origin: margin;"
-        "    left: 10px;"
-        "    padding: 0 3px 0 3px;"
-        "    color: #333333;"
-        "}"
-        "QPushButton {"
-        "    border: 1px solid #cccccc;"
-        "    border-radius: 4px;"
-        "    padding: 8px 16px;"
-        "    background-color: #ffffff;"
-        "    color: #333333;"
-        "}"
-        "QPushButton:hover {"
-        "    background-color: #f5f5f5;"
-        "}"
-        "QPushButton:pressed {"
-        "    background-color: #e5e5e5;"
-        "}"
-        "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {"
-        "    border: 1px solid #cccccc;"
-        "    border-radius: 4px;"
-        "    padding: 5px;"
-        "    background-color: #ffffff;"
-        "}"
-        "QLabel {"
-        "    color: #333333;"
-        "}"
-    );
+    createConnectionGroup();
+    createMotionGroup();
+    createPlannerGroup();
+    createButtonGroup();
     
-    // 创建各个设置组
-    setupRosNetworkGroup();
-    setupRobotConfigGroup();
-    setupNavigationGroup();
-    
-    // 创建底部按钮
-    auto* button_layout = new QHBoxLayout();
-    button_layout->setSpacing(10);
-    
-    d_ptr->save_button = new QPushButton(tr("保存设置"), this);
-    d_ptr->load_button = new QPushButton(tr("加载设置"), this);
-    d_ptr->apply_button = new QPushButton(tr("应用设置"), this);
-    
-    d_ptr->apply_button->setStyleSheet(
-        "QPushButton {"
-        "    background-color: #28a745;"
-        "    color: white;"
-        "    border: none;"
-        "}"
-        "QPushButton:hover {"
-        "    background-color: #218838;"
-        "}"
-        "QPushButton:pressed {"
-        "    background-color: #1e7e34;"
-        "}"
-    );
-    
-    button_layout->addStretch();
-    button_layout->addWidget(d_ptr->load_button);
-    button_layout->addWidget(d_ptr->save_button);
-    button_layout->addWidget(d_ptr->apply_button);
-    
-    // 添加到主布局
-    main_layout->addWidget(d_ptr->ros_network_group);
-    main_layout->addWidget(d_ptr->robot_config_group);
-    main_layout->addWidget(d_ptr->navigation_group);
-    main_layout->addLayout(button_layout);
-    
-    // 连接信号
-    connect(d_ptr->test_connection_button, &QPushButton::clicked,
-            this, &SettingsPanel::onTestConnection);
-    connect(d_ptr->save_button, &QPushButton::clicked,
+    d_->main_layout->addStretch();
+}
+
+void SettingsPanel::createConnectionGroup()
+{
+    d_->connection_group = new QGroupBox(tr("连接设置"), this);
+    auto* layout = new QGridLayout(d_->connection_group);
+
+    // 机器人型号选择
+    layout->addWidget(new QLabel(tr("机器人型号:"), this), 0, 0);
+    d_->robot_model_combo = new QComboBox(this);
+    d_->robot_model_combo->addItem(tr("差速轮机器人"), "differential");
+    d_->robot_model_combo->addItem(tr("全向轮机器人"), "omni");
+    d_->robot_model_combo->addItem(tr("阿克曼机器人"), "ackermann");
+    layout->addWidget(d_->robot_model_combo, 0, 1);
+
+    // 串口设置
+    layout->addWidget(new QLabel(tr("串口:"), this), 1, 0);
+    d_->serial_port_combo = new QComboBox(this);
+    updateSerialPorts();
+    layout->addWidget(d_->serial_port_combo, 1, 1);
+
+    // 波特率设置
+    layout->addWidget(new QLabel(tr("波特率:"), this), 2, 0);
+    d_->baudrate_combo = new QComboBox(this);
+    d_->baudrate_combo->addItem("9600", 9600);
+    d_->baudrate_combo->addItem("19200", 19200);
+    d_->baudrate_combo->addItem("38400", 38400);
+    d_->baudrate_combo->addItem("57600", 57600);
+    d_->baudrate_combo->addItem("115200", 115200);
+    d_->baudrate_combo->setCurrentText("115200");
+    layout->addWidget(d_->baudrate_combo, 2, 1);
+
+    // 自动连接设置
+    d_->auto_connect_check = new QCheckBox(tr("自动连接"), this);
+    layout->addWidget(d_->auto_connect_check, 3, 0, 1, 2);
+
+    // 调试模式设置
+    d_->debug_mode_check = new QCheckBox(tr("调试模式"), this);
+    layout->addWidget(d_->debug_mode_check, 4, 0, 1, 2);
+
+    // 刷新串口按钮
+    d_->refresh_ports_button = new QPushButton(tr("刷新串口"), this);
+    layout->addWidget(d_->refresh_ports_button, 5, 0, 1, 2);
+
+    d_->main_layout->addWidget(d_->connection_group);
+}
+
+void SettingsPanel::createMotionGroup()
+{
+    auto* group_box = new QGroupBox(tr("运动设置"), this);
+    auto* layout = new QGridLayout(group_box);
+
+    // Max speed
+    auto* max_speed_label = new QLabel(tr("最大线速度 (m/s):"), this);
+    d_->max_speed_spin = new QDoubleSpinBox(this);
+    d_->max_speed_spin->setRange(0.1, 2.0);
+    d_->max_speed_spin->setValue(1.0);
+    d_->max_speed_spin->setSingleStep(0.1);
+    layout->addWidget(max_speed_label, 0, 0);
+    layout->addWidget(d_->max_speed_spin, 0, 1);
+
+    // Max angular speed
+    auto* max_angular_speed_label = new QLabel(tr("最大角速度 (rad/s):"), this);
+    d_->max_angular_speed_spin = new QDoubleSpinBox(this);
+    d_->max_angular_speed_spin->setRange(0.1, 3.14);
+    d_->max_angular_speed_spin->setValue(1.57);
+    d_->max_angular_speed_spin->setSingleStep(0.1);
+    layout->addWidget(max_angular_speed_label, 1, 0);
+    layout->addWidget(d_->max_angular_speed_spin, 1, 1);
+
+    // Max acceleration
+    auto* max_accel_label = new QLabel(tr("最大加速度 (m/s²):"), this);
+    d_->max_accel_spin = new QDoubleSpinBox(this);
+    d_->max_accel_spin->setRange(0.1, 2.0);
+    d_->max_accel_spin->setValue(0.5);
+    d_->max_accel_spin->setSingleStep(0.1);
+    layout->addWidget(max_accel_label, 2, 0);
+    layout->addWidget(d_->max_accel_spin, 2, 1);
+
+    // Safety distance
+    auto* safety_distance_label = new QLabel(tr("安全距离 (m):"), this);
+    d_->safety_distance_spin = new QDoubleSpinBox(this);
+    d_->safety_distance_spin->setRange(0.1, 1.0);
+    d_->safety_distance_spin->setValue(0.3);
+    d_->safety_distance_spin->setSingleStep(0.1);
+    layout->addWidget(safety_distance_label, 3, 0);
+    layout->addWidget(d_->safety_distance_spin, 3, 1);
+
+    // Update frequency
+    auto* update_frequency_label = new QLabel(tr("更新频率 (Hz):"), this);
+    d_->update_frequency_spin = new QSpinBox(this);
+    d_->update_frequency_spin->setRange(1, 50);
+    d_->update_frequency_spin->setValue(20);
+    layout->addWidget(update_frequency_label, 4, 0);
+    layout->addWidget(d_->update_frequency_spin, 4, 1);
+
+    d_->main_layout->addWidget(group_box);
+}
+
+void SettingsPanel::createPlannerGroup()
+{
+    d_->planner_group = new QGroupBox(tr("规划器设置"), this);
+    auto* layout = new QGridLayout(d_->planner_group);
+
+    // 规划器类型
+    layout->addWidget(new QLabel(tr("规划器类型:")), 0, 0);
+    d_->planner_type_combo = new QComboBox(this);
+    d_->planner_type_combo->addItem("DWA", "dwa");
+    d_->planner_type_combo->addItem("TEB", "teb");
+    layout->addWidget(d_->planner_type_combo, 0, 1);
+
+    // 路径规划频率
+    layout->addWidget(new QLabel(tr("规划频率(Hz):")), 1, 0);
+    d_->planning_frequency_spin = new QSpinBox(this);
+    d_->planning_frequency_spin->setRange(1, 20);
+    d_->planning_frequency_spin->setValue(10);
+    layout->addWidget(d_->planning_frequency_spin, 1, 1);
+
+    // 目标点容差
+    layout->addWidget(new QLabel(tr("目标点容差(m):")), 2, 0);
+    d_->goal_tolerance_spin = new QDoubleSpinBox(this);
+    d_->goal_tolerance_spin->setRange(0.01, 0.5);
+    d_->goal_tolerance_spin->setValue(0.1);
+    d_->goal_tolerance_spin->setSingleStep(0.01);
+    layout->addWidget(d_->goal_tolerance_spin, 2, 1);
+
+    d_->main_layout->addWidget(d_->planner_group);
+}
+
+void SettingsPanel::createButtonGroup()
+{
+    auto* button_layout = new QHBoxLayout;
+
+    // 保存设置按钮
+    d_->save_settings_button = new QPushButton(tr("保存设置"), this);
+    button_layout->addWidget(d_->save_settings_button);
+
+    // 恢复默认设置按钮
+    d_->restore_defaults_button = new QPushButton(tr("恢复默认"), this);
+    button_layout->addWidget(d_->restore_defaults_button);
+
+    d_->main_layout->addLayout(button_layout);
+}
+
+void SettingsPanel::connectSignalsAndSlots()
+{
+    // Motion settings
+    connect(d_->max_speed_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &SettingsPanel::onMaxSpeedChanged);
+    connect(d_->max_angular_speed_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &SettingsPanel::onMaxAngularSpeedChanged);
+    connect(d_->max_accel_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &SettingsPanel::onMaxAccelChanged);
+    connect(d_->safety_distance_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &SettingsPanel::onSafetyDistanceChanged);
+    connect(d_->update_frequency_spin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &SettingsPanel::onUpdateFrequencyChanged);
+
+    // Connection settings
+    connect(d_->robot_model_combo, &QComboBox::currentTextChanged,
+            this, &SettingsPanel::onRobotModelChanged);
+    connect(d_->serial_port_combo, &QComboBox::currentTextChanged,
+            this, &SettingsPanel::onSerialPortChanged);
+    connect(d_->baudrate_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsPanel::onBaudrateChanged);
+    connect(d_->auto_connect_check, &QCheckBox::stateChanged,
+            this, &SettingsPanel::onAutoConnectChanged);
+    connect(d_->debug_mode_check, &QCheckBox::stateChanged,
+            this, &SettingsPanel::onDebugModeChanged);
+
+    // Planning settings
+    connect(d_->planner_type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsPanel::onPlannerTypeChanged);
+    connect(d_->planning_frequency_spin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &SettingsPanel::onPlanningFreqChanged);
+    connect(d_->goal_tolerance_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &SettingsPanel::onGoalToleranceChanged);
+
+    connect(d_->save_settings_button, &QPushButton::clicked,
             this, &SettingsPanel::onSaveSettings);
-    connect(d_ptr->load_button, &QPushButton::clicked,
-            this, &SettingsPanel::onLoadSettings);
-    connect(d_ptr->apply_button, &QPushButton::clicked,
-            this, &SettingsPanel::onApplySettings);
+            
+    connect(d_->restore_defaults_button, &QPushButton::clicked,
+            this, &SettingsPanel::onRestoreDefaults);
+
+    connect(d_->refresh_ports_button, &QPushButton::clicked,
+            this, &SettingsPanel::updateSerialPorts);
 }
 
-void SettingsPanel::setupRosNetworkGroup()
+void SettingsPanel::updateSerialPorts()
 {
-    d_ptr->ros_network_group = new QGroupBox(tr("ROS网络设置"), this);
-    auto* layout = new QGridLayout(d_ptr->ros_network_group);
-    layout->setSpacing(10);
-    
-    // Master URI
-    auto* master_uri_label = new QLabel(tr("ROS Master URI:"), this);
-    d_ptr->master_uri_edit = new QLineEdit(this);
-    d_ptr->master_uri_edit->setPlaceholderText("http://localhost:11311");
-    
-    // 主机名
-    auto* hostname_label = new QLabel(tr("主机名:"), this);
-    d_ptr->hostname_edit = new QLineEdit(this);
-    d_ptr->hostname_edit->setText(QHostInfo::localHostName());
-    
-    // 连接测试
-    d_ptr->test_connection_button = new QPushButton(tr("测试连接"), this);
-    d_ptr->connection_status_label = new QLabel(tr("未连接"), this);
-    d_ptr->connection_status_label->setStyleSheet("color: #dc3545;");
-    
-    // 添加到布局
-    layout->addWidget(master_uri_label, 0, 0);
-    layout->addWidget(d_ptr->master_uri_edit, 0, 1, 1, 2);
-    layout->addWidget(hostname_label, 1, 0);
-    layout->addWidget(d_ptr->hostname_edit, 1, 1, 1, 2);
-    layout->addWidget(d_ptr->test_connection_button, 2, 1);
-    layout->addWidget(d_ptr->connection_status_label, 2, 2);
-}
-
-void SettingsPanel::setupRobotConfigGroup()
-{
-    d_ptr->robot_config_group = new QGroupBox(tr("机器人配置"), this);
-    auto* layout = new QGridLayout(d_ptr->robot_config_group);
-    layout->setSpacing(10);
-    
-    // 机器人型号
-    auto* model_label = new QLabel(tr("机器人型号:"), this);
-    d_ptr->robot_model_combo = new QComboBox(this);
-    d_ptr->robot_model_combo->addItems({
-        "TurtleBot3 Burger",
-        "TurtleBot3 Waffle",
-        "TurtleBot3 Waffle Pi",
-        "Custom Robot"
-    });
-    
-    // 串口设备
-    auto* serial_label = new QLabel(tr("串口设备:"), this);
-    d_ptr->serial_port_combo = new QComboBox(this);
-    // 获取可用串口列表
+    d_->serial_port_combo->clear();
     const auto ports = QSerialPortInfo::availablePorts();
     for (const auto& port : ports) {
-        d_ptr->serial_port_combo->addItem(port.portName());
+        d_->serial_port_combo->addItem(port.portName());
     }
-    
-    // 波特率
-    auto* baudrate_label = new QLabel(tr("波特率:"), this);
-    d_ptr->baudrate_combo = new QComboBox(this);
-    d_ptr->baudrate_combo->addItems({
-        "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"
-    });
-    d_ptr->baudrate_combo->setCurrentText("115200");
-    
-    // 机器人名称
-    auto* name_label = new QLabel(tr("机器人名称:"), this);
-    d_ptr->robot_name_edit = new QLineEdit(this);
-    d_ptr->robot_name_edit->setPlaceholderText("my_robot");
-    
-    // 机器人ID
-    auto* id_label = new QLabel(tr("机器人ID:"), this);
-    d_ptr->robot_id_edit = new QLineEdit(this);
-    d_ptr->robot_id_edit->setPlaceholderText("robot_001");
-    
-    // 添加到布局
-    layout->addWidget(model_label, 0, 0);
-    layout->addWidget(d_ptr->robot_model_combo, 0, 1, 1, 2);
-    layout->addWidget(serial_label, 1, 0);
-    layout->addWidget(d_ptr->serial_port_combo, 1, 1, 1, 2);
-    layout->addWidget(baudrate_label, 2, 0);
-    layout->addWidget(d_ptr->baudrate_combo, 2, 1, 1, 2);
-    layout->addWidget(name_label, 3, 0);
-    layout->addWidget(d_ptr->robot_name_edit, 3, 1, 1, 2);
-    layout->addWidget(id_label, 4, 0);
-    layout->addWidget(d_ptr->robot_id_edit, 4, 1, 1, 2);
-}
-
-void SettingsPanel::setupNavigationGroup()
-{
-    d_ptr->navigation_group = new QGroupBox(tr("导航参数"), this);
-    auto* layout = new QGridLayout(d_ptr->navigation_group);
-    layout->setSpacing(10);
-    
-    // 全局路径规划频率
-    auto* global_freq_label = new QLabel(tr("全局规划频率(Hz):"), this);
-    d_ptr->global_planner_frequency_spin = new QSpinBox(this);
-    d_ptr->global_planner_frequency_spin->setRange(1, 100);
-    d_ptr->global_planner_frequency_spin->setValue(5);
-    
-    // 局部路径规划频率
-    auto* local_freq_label = new QLabel(tr("局部规划频率(Hz):"), this);
-    d_ptr->local_planner_frequency_spin = new QSpinBox(this);
-    d_ptr->local_planner_frequency_spin->setRange(1, 100);
-    d_ptr->local_planner_frequency_spin->setValue(20);
-    
-    // 膨胀半径
-    auto* inflation_label = new QLabel(tr("膨胀半径(m):"), this);
-    d_ptr->inflation_radius_spin = new QDoubleSpinBox(this);
-    d_ptr->inflation_radius_spin->setRange(0.1, 1.0);
-    d_ptr->inflation_radius_spin->setSingleStep(0.05);
-    d_ptr->inflation_radius_spin->setValue(0.55);
-    
-    // 机器人半径
-    auto* robot_radius_label = new QLabel(tr("机器人半径(m):"), this);
-    d_ptr->robot_radius_spin = new QDoubleSpinBox(this);
-    d_ptr->robot_radius_spin->setRange(0.1, 1.0);
-    d_ptr->robot_radius_spin->setSingleStep(0.05);
-    d_ptr->robot_radius_spin->setValue(0.2);
-    
-    // 最大线速度
-    auto* max_vel_x_label = new QLabel(tr("最大线速度(m/s):"), this);
-    d_ptr->max_vel_x_spin = new QDoubleSpinBox(this);
-    d_ptr->max_vel_x_spin->setRange(0.1, 2.0);
-    d_ptr->max_vel_x_spin->setSingleStep(0.1);
-    d_ptr->max_vel_x_spin->setValue(0.5);
-    
-    // 最小线速度
-    auto* min_vel_x_label = new QLabel(tr("最小线速度(m/s):"), this);
-    d_ptr->min_vel_x_spin = new QDoubleSpinBox(this);
-    d_ptr->min_vel_x_spin->setRange(-0.5, 0.2);
-    d_ptr->min_vel_x_spin->setSingleStep(0.05);
-    d_ptr->min_vel_x_spin->setValue(0.0);
-    
-    // 最大角速度
-    auto* max_vel_theta_label = new QLabel(tr("最大角速度(rad/s):"), this);
-    d_ptr->max_vel_theta_spin = new QDoubleSpinBox(this);
-    d_ptr->max_vel_theta_spin->setRange(0.1, 3.0);
-    d_ptr->max_vel_theta_spin->setSingleStep(0.1);
-    d_ptr->max_vel_theta_spin->setValue(1.0);
-    
-    // 最小角速度
-    auto* min_vel_theta_label = new QLabel(tr("最小角速度(rad/s):"), this);
-    d_ptr->min_vel_theta_spin = new QDoubleSpinBox(this);
-    d_ptr->min_vel_theta_spin->setRange(-1.5, 0.2);
-    d_ptr->min_vel_theta_spin->setSingleStep(0.1);
-    d_ptr->min_vel_theta_spin->setValue(0.0);
-    
-    // 线加速度限制
-    auto* acc_lim_x_label = new QLabel(tr("线加速度限制(m/s²):"), this);
-    d_ptr->acc_lim_x_spin = new QDoubleSpinBox(this);
-    d_ptr->acc_lim_x_spin->setRange(0.1, 3.0);
-    d_ptr->acc_lim_x_spin->setSingleStep(0.1);
-    d_ptr->acc_lim_x_spin->setValue(1.0);
-    
-    // 角加速度限制
-    auto* acc_lim_theta_label = new QLabel(tr("角加速度限制(rad/s²):"), this);
-    d_ptr->acc_lim_theta_spin = new QDoubleSpinBox(this);
-    d_ptr->acc_lim_theta_spin->setRange(0.1, 5.0);
-    d_ptr->acc_lim_theta_spin->setSingleStep(0.1);
-    d_ptr->acc_lim_theta_spin->setValue(2.0);
-    
-    // 添加到布局
-    int row = 0;
-    layout->addWidget(global_freq_label, row, 0);
-    layout->addWidget(d_ptr->global_planner_frequency_spin, row++, 1);
-    layout->addWidget(local_freq_label, row, 0);
-    layout->addWidget(d_ptr->local_planner_frequency_spin, row++, 1);
-    layout->addWidget(inflation_label, row, 0);
-    layout->addWidget(d_ptr->inflation_radius_spin, row++, 1);
-    layout->addWidget(robot_radius_label, row, 0);
-    layout->addWidget(d_ptr->robot_radius_spin, row++, 1);
-    layout->addWidget(max_vel_x_label, row, 0);
-    layout->addWidget(d_ptr->max_vel_x_spin, row++, 1);
-    layout->addWidget(min_vel_x_label, row, 0);
-    layout->addWidget(d_ptr->min_vel_x_spin, row++, 1);
-    layout->addWidget(max_vel_theta_label, row, 0);
-    layout->addWidget(d_ptr->max_vel_theta_spin, row++, 1);
-    layout->addWidget(min_vel_theta_label, row, 0);
-    layout->addWidget(d_ptr->min_vel_theta_spin, row++, 1);
-    layout->addWidget(acc_lim_x_label, row, 0);
-    layout->addWidget(d_ptr->acc_lim_x_spin, row++, 1);
-    layout->addWidget(acc_lim_theta_label, row, 0);
-    layout->addWidget(d_ptr->acc_lim_theta_spin, row++, 1);
-}
-
-void SettingsPanel::onTestConnection()
-{
-    d_ptr->test_connection_button->setEnabled(false);
-    d_ptr->connection_status_label->setText(tr("正在测试..."));
-    
-    // 获取设置的ROS Master URI
-    QString master_uri = d_ptr->master_uri_edit->text();
-    if (master_uri.isEmpty()) {
-        master_uri = "http://localhost:11311";
-    }
-    
-    // 测试连接
-    if (d_ptr->robot_controller) {
-        bool success = d_ptr->robot_controller->testConnection(master_uri.toStdString());
-        updateConnectionStatus(success);
-    }
-    
-    d_ptr->test_connection_button->setEnabled(true);
-}
-
-void SettingsPanel::updateConnectionStatus(bool connected)
-{
-    if (connected) {
-        d_ptr->connection_status_label->setText(tr("已连接"));
-        d_ptr->connection_status_label->setStyleSheet("color: #28a745;");
-    } else {
-        d_ptr->connection_status_label->setText(tr("连接失败"));
-        d_ptr->connection_status_label->setStyleSheet("color: #dc3545;");
-    }
-}
-
-void SettingsPanel::onSaveSettings()
-{
-    if (!validateSettings()) {
-        return;
-    }
-    
-    saveSettings();
-    QMessageBox::information(this, tr("保存成功"), tr("设置已保存"));
-}
-
-void SettingsPanel::onLoadSettings()
-{
-    loadSettings();
-    QMessageBox::information(this, tr("加载成功"), tr("设置已加载"));
-}
-
-void SettingsPanel::onApplySettings()
-{
-    if (!validateSettings()) {
-        return;
-    }
-    
-    if (!d_ptr->robot_controller) {
-        QMessageBox::warning(this, tr("错误"), tr("机器人控制器未初始化"));
-        return;
-    }
-    
-    // 应用ROS网络设置
-    d_ptr->robot_controller->setMasterURI(d_ptr->master_uri_edit->text());
-    d_ptr->robot_controller->setHostname(d_ptr->hostname_edit->text());
-    
-    // 应用机器人配置
-    d_ptr->robot_controller->setRobotModel(d_ptr->robot_model_combo->currentText().toStdString());
-    d_ptr->robot_controller->setSerialPort(d_ptr->serial_port_combo->currentText().toStdString());
-    d_ptr->robot_controller->setBaudrate(d_ptr->baudrate_combo->currentText().toInt());
-    
-    // 应用导航参数
-    d_ptr->robot_controller->setPlannerFrequency(d_ptr->global_planner_frequency_spin->value());
-    d_ptr->robot_controller->setControllerFrequency(d_ptr->local_planner_frequency_spin->value());
-    d_ptr->robot_controller->setInflationRadius(d_ptr->inflation_radius_spin->value());
-    
-    // 设置速度限制
-    d_ptr->robot_controller->setMaxLinearVelocity(d_ptr->max_vel_x_spin->value());
-    d_ptr->robot_controller->setMaxAngularVelocity(d_ptr->max_vel_theta_spin->value());
-    
-    QMessageBox::information(this, tr("应用成功"), tr("设置已应用"));
 }
 
 void SettingsPanel::loadSettings()
 {
-    QSettings settings(d_ptr->config_file_path, QSettings::IniFormat);
+    QSettings settings;
     
-    // 加载ROS网络设置
-    settings.beginGroup("ROS");
-    d_ptr->master_uri_edit->setText(settings.value("master_uri", "http://localhost:11311").toString());
-    d_ptr->hostname_edit->setText(settings.value("hostname", QHostInfo::localHostName()).toString());
-    settings.endGroup();
+    // 加载连接设置
+    d_->robot_model_combo->setCurrentText(settings.value("robot_model", "differential").toString());
+    d_->serial_port_combo->setCurrentText(settings.value("serial_port", "").toString());
+    d_->baudrate_combo->setCurrentText(settings.value("baudrate", "115200").toString());
+    d_->auto_connect_check->setChecked(settings.value("auto_connect", false).toBool());
+    d_->debug_mode_check->setChecked(settings.value("debug_mode", false).toBool());
     
-    // 加载机器人配置
-    settings.beginGroup("Robot");
-    d_ptr->robot_model_combo->setCurrentText(settings.value("model", "TurtleBot3 Burger").toString());
-    d_ptr->serial_port_combo->setCurrentText(settings.value("serial_port", "").toString());
-    d_ptr->baudrate_combo->setCurrentText(settings.value("baudrate", "115200").toString());
-    d_ptr->robot_name_edit->setText(settings.value("name", "my_robot").toString());
-    d_ptr->robot_id_edit->setText(settings.value("id", "robot_001").toString());
-    settings.endGroup();
+    // 加载运动设置
+    d_->max_speed_spin->setValue(settings.value("max_speed", 1.0).toDouble());
+    d_->max_angular_speed_spin->setValue(settings.value("max_angular_speed", 1.57).toDouble());
+    d_->max_accel_spin->setValue(settings.value("max_accel", 0.5).toDouble());
+    d_->safety_distance_spin->setValue(settings.value("safety_distance", 0.3).toDouble());
+    d_->update_frequency_spin->setValue(settings.value("update_frequency", 20).toInt());
     
-    // 加载导航参数
-    settings.beginGroup("Navigation");
-    d_ptr->global_planner_frequency_spin->setValue(settings.value("global_planner_frequency", 5).toInt());
-    d_ptr->local_planner_frequency_spin->setValue(settings.value("local_planner_frequency", 20).toInt());
-    d_ptr->inflation_radius_spin->setValue(settings.value("inflation_radius", 0.55).toDouble());
-    d_ptr->robot_radius_spin->setValue(settings.value("robot_radius", 0.2).toDouble());
-    d_ptr->max_vel_x_spin->setValue(settings.value("max_vel_x", 0.5).toDouble());
-    d_ptr->min_vel_x_spin->setValue(settings.value("min_vel_x", 0.0).toDouble());
-    d_ptr->max_vel_theta_spin->setValue(settings.value("max_vel_theta", 1.0).toDouble());
-    d_ptr->min_vel_theta_spin->setValue(settings.value("min_vel_theta", 0.0).toDouble());
-    d_ptr->acc_lim_x_spin->setValue(settings.value("acc_lim_x", 1.0).toDouble());
-    d_ptr->acc_lim_theta_spin->setValue(settings.value("acc_lim_theta", 2.0).toDouble());
-    settings.endGroup();
+    // 加载规划器设置
+    d_->planner_type_combo->setCurrentText(settings.value("planner_type", "DWA").toString());
+    d_->planning_frequency_spin->setValue(settings.value("planning_frequency", 10).toInt());
+    d_->goal_tolerance_spin->setValue(settings.value("goal_tolerance", 0.1).toDouble());
 }
 
-void SettingsPanel::saveSettings()
+void SettingsPanel::onSaveSettings()
 {
-    QSettings settings(d_ptr->config_file_path, QSettings::IniFormat);
+    QSettings settings;
     
-    // 保存ROS网络设置
-    settings.beginGroup("ROS");
-    settings.setValue("master_uri", d_ptr->master_uri_edit->text());
-    settings.setValue("hostname", d_ptr->hostname_edit->text());
-    settings.endGroup();
+    // 保存连接设置
+    settings.setValue("robot_model", d_->robot_model_combo->currentText());
+    settings.setValue("serial_port", d_->serial_port_combo->currentText());
+    settings.setValue("baudrate", d_->baudrate_combo->currentText());
+    settings.setValue("auto_connect", d_->auto_connect_check->isChecked());
+    settings.setValue("debug_mode", d_->debug_mode_check->isChecked());
     
-    // 保存机器人配置
-    settings.beginGroup("Robot");
-    settings.setValue("model", d_ptr->robot_model_combo->currentText());
-    settings.setValue("serial_port", d_ptr->serial_port_combo->currentText());
-    settings.setValue("baudrate", d_ptr->baudrate_combo->currentText());
-    settings.setValue("name", d_ptr->robot_name_edit->text());
-    settings.setValue("id", d_ptr->robot_id_edit->text());
-    settings.endGroup();
+    // 保存运动设置
+    settings.setValue("max_speed", d_->max_speed_spin->value());
+    settings.setValue("max_angular_speed", d_->max_angular_speed_spin->value());
+    settings.setValue("max_accel", d_->max_accel_spin->value());
+    settings.setValue("safety_distance", d_->safety_distance_spin->value());
+    settings.setValue("update_frequency", d_->update_frequency_spin->value());
     
-    // 保存导航参数
-    settings.beginGroup("Navigation");
-    settings.setValue("global_planner_frequency", d_ptr->global_planner_frequency_spin->value());
-    settings.setValue("local_planner_frequency", d_ptr->local_planner_frequency_spin->value());
-    settings.setValue("inflation_radius", d_ptr->inflation_radius_spin->value());
-    settings.setValue("robot_radius", d_ptr->robot_radius_spin->value());
-    settings.setValue("max_vel_x", d_ptr->max_vel_x_spin->value());
-    settings.setValue("min_vel_x", d_ptr->min_vel_x_spin->value());
-    settings.setValue("max_vel_theta", d_ptr->max_vel_theta_spin->value());
-    settings.setValue("min_vel_theta", d_ptr->min_vel_theta_spin->value());
-    settings.setValue("acc_lim_x", d_ptr->acc_lim_x_spin->value());
-    settings.setValue("acc_lim_theta", d_ptr->acc_lim_theta_spin->value());
-    settings.endGroup();
+    // 保存规划器设置
+    settings.setValue("planner_type", d_->planner_type_combo->currentText());
+    settings.setValue("planning_frequency", d_->planning_frequency_spin->value());
+    settings.setValue("goal_tolerance", d_->goal_tolerance_spin->value());
     
-    settings.sync();
+    QMessageBox::information(this, tr("成功"), tr("设置已保存"));
 }
 
-bool SettingsPanel::validateSettings()
+void SettingsPanel::onRestoreDefaults()
 {
-    // 验证ROS Master URI
-    if (d_ptr->master_uri_edit->text().isEmpty()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("ROS Master URI不能为空"));
-        return false;
-    }
+    // 恢复连接设置默认值
+    d_->robot_model_combo->setCurrentText("differential");
+    d_->baudrate_combo->setCurrentText("115200");
+    d_->auto_connect_check->setChecked(false);
+    d_->debug_mode_check->setChecked(false);
     
-    // 验证主机名
-    if (d_ptr->hostname_edit->text().isEmpty()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("主机名不能为空"));
-        return false;
-    }
+    // 恢复运动设置默认值
+    d_->max_speed_spin->setValue(1.0);
+    d_->max_angular_speed_spin->setValue(1.57);
+    d_->max_accel_spin->setValue(0.5);
+    d_->safety_distance_spin->setValue(0.3);
+    d_->update_frequency_spin->setValue(20);
     
-    // 验证机器人名称
-    if (d_ptr->robot_name_edit->text().isEmpty()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("机器人名称不能为空"));
-        return false;
-    }
+    // 恢复规划器设置默认值
+    d_->planner_type_combo->setCurrentText("DWA");
+    d_->planning_frequency_spin->setValue(10);
+    d_->goal_tolerance_spin->setValue(0.1);
     
-    // 验证机器人ID
-    if (d_ptr->robot_id_edit->text().isEmpty()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("机器人ID不能为空"));
-        return false;
+    QMessageBox::information(this, tr("成功"), tr("已恢复默认设置"));
+}
+
+void SettingsPanel::onMaxSpeedChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setMaxSpeed(value);
     }
-    
-    // 验证速度限制
-    if (d_ptr->max_vel_x_spin->value() <= d_ptr->min_vel_x_spin->value()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("最大线速度必须大于最小线速度"));
-        return false;
+}
+
+void SettingsPanel::onMaxAngularSpeedChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setMaxAngularSpeed(value);
     }
-    
-    if (d_ptr->max_vel_theta_spin->value() <= d_ptr->min_vel_theta_spin->value()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("最大角速度必须大于最小角速度"));
-        return false;
+}
+
+void SettingsPanel::onMaxAccelChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setMaxAcceleration(value);
     }
-    
-    return true;
+}
+
+void SettingsPanel::onSafetyDistanceChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setSafetyDistance(value);
+    }
+}
+
+void SettingsPanel::onUpdateFrequencyChanged(int value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setUpdateFrequency(value);
+    }
+}
+
+void SettingsPanel::onRobotModelChanged(const QString&)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setRobotModel(d_->robot_model_combo->currentData().toString());
+    }
+}
+
+void SettingsPanel::onSerialPortChanged(const QString&)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setSerialPort(d_->serial_port_combo->currentText());
+    }
+}
+
+void SettingsPanel::onBaudrateChanged(int)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setBaudrate(d_->baudrate_combo->currentData().toInt());
+    }
+}
+
+void SettingsPanel::onAutoConnectChanged(int)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setAutoConnect(d_->auto_connect_check->isChecked());
+    }
+}
+
+void SettingsPanel::onDebugModeChanged(int)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setDebugMode(d_->debug_mode_check->isChecked());
+    }
+}
+
+void SettingsPanel::onPlannerTypeChanged(int)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setPlannerType(d_->planner_type_combo->currentData().toString());
+    }
+}
+
+void SettingsPanel::onPlanningFreqChanged(int value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setPlanningFrequency(value);
+    }
+}
+
+void SettingsPanel::onGoalToleranceChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setGoalTolerance(value);
+    }
 } 

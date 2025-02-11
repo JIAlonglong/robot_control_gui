@@ -1,4 +1,5 @@
 #include "ui/planner_settings_dialog.h"
+#include "ros/robot_controller.h"
 #include <QGroupBox>
 #include <QMessageBox>
 #include <QVBoxLayout>
@@ -8,160 +9,142 @@
 #include <QPushButton>
 #include <QDialogButtonBox>
 
+struct PlannerSettingsDialog::Private {
+    std::shared_ptr<RobotController> robot_controller;
+    QComboBox* global_planner_combo{nullptr};
+    QComboBox* local_planner_combo{nullptr};
+    QLabel* global_planner_desc{nullptr};
+    QLabel* local_planner_desc{nullptr};
+    QPushButton* ok_button{nullptr};
+    QPushButton* cancel_button{nullptr};
+    QDialogButtonBox* button_box{nullptr};
+};
+
 PlannerSettingsDialog::PlannerSettingsDialog(std::shared_ptr<RobotController> robot_controller, QWidget* parent)
     : QDialog(parent)
-    , robot_controller_(robot_controller)
+    , d_(std::make_unique<Private>())
 {
-    setWindowTitle("路径规划器设置");
+    d_->robot_controller = robot_controller;
     setupUi();
     connectSignalsAndSlots();
+    updatePlannerDescriptions();
 }
+
+PlannerSettingsDialog::~PlannerSettingsDialog() = default;
 
 void PlannerSettingsDialog::setupUi()
 {
-    auto* main_layout = new QVBoxLayout(this);
-    
-    // 全局规划器设置
-    auto* global_planner_group = new QGroupBox("全局路径规划器", this);
-    auto* global_planner_layout = new QVBoxLayout(global_planner_group);
-    
-    auto* global_planner_label = new QLabel("选择全局规划器:", this);
-    global_planner_combo_ = new QComboBox(this);
-    global_planner_description_ = new QLabel(this);
-    global_planner_description_->setWordWrap(true);
-    
-    // 添加可用的全局规划器
-    auto global_planners = robot_controller_->getAvailableGlobalPlanners();
-    for (const auto& planner : global_planners) {
-        global_planner_combo_->addItem(planner);
-    }
-    
-    global_planner_layout->addWidget(global_planner_label);
-    global_planner_layout->addWidget(global_planner_combo_);
-    global_planner_layout->addWidget(global_planner_description_);
-    
-    // 局部规划器设置
-    auto* local_planner_group = new QGroupBox("局部路径规划器", this);
-    auto* local_planner_layout = new QVBoxLayout(local_planner_group);
-    
-    auto* local_planner_label = new QLabel("选择局部规划器:", this);
-    local_planner_combo_ = new QComboBox(this);
-    local_planner_description_ = new QLabel(this);
-    local_planner_description_->setWordWrap(true);
-    
-    // 添加可用的局部规划器
-    auto local_planners = robot_controller_->getAvailableLocalPlanners();
-    for (const auto& planner : local_planners) {
-        local_planner_combo_->addItem(planner);
-    }
-    
-    local_planner_layout->addWidget(local_planner_label);
-    local_planner_layout->addWidget(local_planner_combo_);
-    local_planner_layout->addWidget(local_planner_description_);
-    
-    // 添加确定和取消按钮
-    button_box_ = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-        Qt::Horizontal, this);
-    
-    main_layout->addWidget(global_planner_group);
-    main_layout->addWidget(local_planner_group);
-    main_layout->addWidget(button_box_);
-    
-    // 设置当前选中的规划器
-    int global_index = global_planner_combo_->findText(robot_controller_->getCurrentGlobalPlanner());
-    if (global_index >= 0) {
-        global_planner_combo_->setCurrentIndex(global_index);
-    }
-    
-    int local_index = local_planner_combo_->findText(robot_controller_->getCurrentLocalPlanner());
-    if (local_index >= 0) {
-        local_planner_combo_->setCurrentIndex(local_index);
-    }
-    
-    updatePlannerDescriptions();
+    setWindowTitle(tr("规划器设置"));
+    setModal(true);
+
+    auto* layout = new QVBoxLayout(this);
+
+    // 全局规划器
+    auto* global_group = new QGroupBox(tr("全局规划器"), this);
+    auto* global_layout = new QVBoxLayout(global_group);
+
+    d_->global_planner_combo = new QComboBox(this);
+    d_->global_planner_combo->addItems({"navfn", "global_planner", "carrot_planner"});
+    d_->global_planner_desc = new QLabel(this);
+    d_->global_planner_desc->setWordWrap(true);
+
+    global_layout->addWidget(d_->global_planner_combo);
+    global_layout->addWidget(d_->global_planner_desc);
+
+    // 局部规划器
+    auto* local_group = new QGroupBox(tr("局部规划器"), this);
+    auto* local_layout = new QVBoxLayout(local_group);
+
+    d_->local_planner_combo = new QComboBox(this);
+    d_->local_planner_combo->addItems({"dwa_local_planner", "teb_local_planner", "eband_local_planner"});
+    d_->local_planner_desc = new QLabel(this);
+    d_->local_planner_desc->setWordWrap(true);
+
+    local_layout->addWidget(d_->local_planner_combo);
+    local_layout->addWidget(d_->local_planner_desc);
+
+    // 按钮
+    d_->button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    d_->ok_button = d_->button_box->button(QDialogButtonBox::Ok);
+    d_->cancel_button = d_->button_box->button(QDialogButtonBox::Cancel);
+
+    d_->ok_button->setText(tr("确定"));
+    d_->cancel_button->setText(tr("取消"));
+
+    layout->addWidget(global_group);
+    layout->addWidget(local_group);
+    layout->addWidget(d_->button_box);
 }
 
 void PlannerSettingsDialog::connectSignalsAndSlots()
 {
-    connect(global_planner_combo_, QOverload<const QString&>::of(&QComboBox::currentTextChanged),
+    connect(d_->global_planner_combo, &QComboBox::currentTextChanged,
             this, &PlannerSettingsDialog::onGlobalPlannerChanged);
-            
-    connect(local_planner_combo_, QOverload<const QString&>::of(&QComboBox::currentTextChanged),
+    connect(d_->local_planner_combo, &QComboBox::currentTextChanged,
             this, &PlannerSettingsDialog::onLocalPlannerChanged);
-            
-    connect(button_box_, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(button_box_, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    
-    connect(this, &QDialog::accepted, this, &PlannerSettingsDialog::onAccepted);
-    connect(this, &QDialog::rejected, this, &PlannerSettingsDialog::onRejected);
+
+    connect(d_->button_box, &QDialogButtonBox::accepted,
+            this, &PlannerSettingsDialog::onAccepted);
+    connect(d_->button_box, &QDialogButtonBox::rejected,
+            this, &PlannerSettingsDialog::onRejected);
 }
 
-void PlannerSettingsDialog::onGlobalPlannerChanged(const QString& planner_name)
+void PlannerSettingsDialog::onGlobalPlannerChanged(const QString& planner)
 {
-    if (robot_controller_) {
-        robot_controller_->setGlobalPlanner(planner_name);
+    if (d_->robot_controller) {
+        d_->robot_controller->setGlobalPlanner(planner);
+        updatePlannerDescriptions();
     }
-    updatePlannerDescriptions();
 }
 
-void PlannerSettingsDialog::onLocalPlannerChanged(const QString& planner_name)
+void PlannerSettingsDialog::onLocalPlannerChanged(const QString& planner)
 {
-    if (robot_controller_) {
-        robot_controller_->setLocalPlanner(planner_name);
+    if (d_->robot_controller) {
+        d_->robot_controller->setLocalPlanner(planner);
+        updatePlannerDescriptions();
     }
-    updatePlannerDescriptions();
 }
 
 void PlannerSettingsDialog::onAccepted()
 {
-    // 保存设置
-    if (robot_controller_) {
-        robot_controller_->setGlobalPlanner(global_planner_combo_->currentText());
-        robot_controller_->setLocalPlanner(local_planner_combo_->currentText());
+    if (d_->robot_controller) {
+        d_->robot_controller->saveNavigationSettings();
+        accept();
     }
 }
 
 void PlannerSettingsDialog::onRejected()
 {
-    // 恢复原来的设置
-    if (robot_controller_) {
-        robot_controller_->setGlobalPlanner(robot_controller_->getCurrentGlobalPlanner());
-        robot_controller_->setLocalPlanner(robot_controller_->getCurrentLocalPlanner());
+    if (d_->robot_controller) {
+        d_->robot_controller->restoreNavigationSettings();
+        reject();
     }
 }
 
 void PlannerSettingsDialog::updatePlannerDescriptions()
 {
-    QString global_planner = global_planner_combo_->currentText();
-    QString local_planner = local_planner_combo_->currentText();
-    
-    global_planner_description_->setText(getGlobalPlannerDescription(global_planner));
-    local_planner_description_->setText(getLocalPlannerDescription(local_planner));
-}
+    QString global_planner = d_->global_planner_combo->currentText();
+    QString local_planner = d_->local_planner_combo->currentText();
 
-QString PlannerSettingsDialog::getGlobalPlannerDescription(const QString& planner_name) const
-{
-    if (planner_name == "navfn/NavfnROS") {
-        return "默认全局规划器，使用 Dijkstra 算法计算最短路径，适合一般导航场景。";
-    } else if (planner_name == "global_planner/GlobalPlanner") {
-        return "改进的 A* 规划器，支持多种启发式方法，可以处理更复杂的环境。";
-    } else if (planner_name == "carrot_planner/CarrotPlanner") {
-        return "简单的直线规划器，适合开阔、无障碍的简单环境。";
+    // 更新全局规划器描述
+    QString global_desc;
+    if (global_planner == "navfn") {
+        global_desc = tr("Dijkstra算法实现的全局路径规划器，适用于大多数场景。");
+    } else if (global_planner == "global_planner") {
+        global_desc = tr("A*算法实现的全局路径规划器，支持更多配置选项。");
+    } else if (global_planner == "carrot_planner") {
+        global_desc = tr("简单的直线规划器，适用于开阔环境。");
     }
-    return "";
-}
+    d_->global_planner_desc->setText(global_desc);
 
-QString PlannerSettingsDialog::getLocalPlannerDescription(const QString& planner_name) const
-{
-    if (planner_name == "base_local_planner/TrajectoryPlannerROS") {
-        return "传统的 DWA 规划器，稳定可靠，适合一般场景。";
-    } else if (planner_name == "dwa_local_planner/DWAPlannerROS") {
-        return "改进的 DWA 规划器，生成更平滑的路径，对动态障碍物响应更好。";
-    } else if (planner_name == "teb_local_planner/TebLocalPlannerROS") {
-        return "时间弹性带规划器，可以处理各种运动约束，适合动态环境。";
-    } else if (planner_name == "eband_local_planner/EBandPlannerROS") {
-        return "弹性带规划器，生成平滑路径，计算效率高。";
+    // 更新局部规划器描述
+    QString local_desc;
+    if (local_planner == "dwa_local_planner") {
+        local_desc = tr("动态窗口法实现的局部规划器，适用于差分驱动机器人。");
+    } else if (local_planner == "teb_local_planner") {
+        local_desc = tr("时间弹性带算法实现的局部规划器，支持多种运动约束。");
+    } else if (local_planner == "eband_local_planner") {
+        local_desc = tr("弹性带算法实现的局部规划器，生成平滑的路径。");
     }
-    return "";
+    d_->local_planner_desc->setText(local_desc);
 } 

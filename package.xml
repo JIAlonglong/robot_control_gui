@@ -25,18 +25,6 @@
   <depend>actionlib</depend>
   <depend>std_srvs</depend>
 
-  <!-- Navigation and SLAM -->
-  <depend>map_server</depend>
-  <depend>move_base</depend>
-  <depend>gmapping</depend>
-  <depend>amcl</depend>
-
-  <!-- Turtlebot3 -->
-  <depend>turtlebot3_bringup</depend>
-  <depend>turtlebot3_navigation</depend>
-  <depend>turtlebot3_slam</depend>
-  <depend>turtlebot3_teleop</depend>
-
   <!-- Visualization -->
   <depend>rviz</depend>
   <depend>image_transport</depend>
@@ -45,15 +33,40 @@
   <!-- Qt Dependencies -->
   <build_depend>qtbase5-dev</build_depend>
   <build_depend>qt5-qmake</build_depend>
+  <build_depend>libqt5-dev</build_depend>
+  <build_depend>libqt5-serialport-dev</build_depend>
+  <build_depend>libqt5-network-dev</build_depend>
+  <build_depend>libqt5-xml-dev</build_depend>
+  <build_depend>libqt5-opengl-dev</build_depend>
   <exec_depend>libqt5-core</exec_depend>
   <exec_depend>libqt5-gui</exec_depend>
   <exec_depend>libqt5-widgets</exec_depend>
-
-  <!-- Testing -->
-  <test_depend>rostest</test_depend>
-  <test_depend>gtest</test_depend>
+  <exec_depend>libqt5-network</exec_depend>
+  <exec_depend>libqt5-serialport</exec_depend>
+  <exec_depend>libqt5-xml</exec_depend>
+  <exec_depend>libqt5-opengl</exec_depend>
 
   <!-- Added rospy dependency -->
   <build_depend>rospy</build_depend>
   <exec_depend>rospy</exec_depend>
+
+  <!-- SLAM related dependencies -->
+  <depend>gmapping</depend>
+  <depend>cartographer_ros</depend>
+  <depend>hector_mapping</depend>
+  <depend>hector_trajectory_server</depend>
+  <depend>map_server</depend>
+
+  <!-- Navigation related dependencies -->
+  <depend>move_base</depend>
+  <depend>amcl</depend>
+  <depend>global_planner</depend>
+  <depend>dwa_local_planner</depend>
+
+  <!-- Visualization related dependencies -->
+  <depend>interactive_markers</depend>
+  <depend>visualization_msgs</depend>
+
+  <export>
+  </export>
 </package>

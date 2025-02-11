@@ -1,507 +1,353 @@
 #include "ui/control_panel.h"
-#include "ui/joystick_widget.h"
-#include "ui/speed_dashboard.h"
 #include "ros/robot_controller.h"
-#include <QCamera>
-#include <QCameraViewfinder>
-#include <QCameraImageCapture>
-#include <QSlider>
-#include <QStyle>
-#include <QStyleOption>
-#include <QDir>
+#include "ui/joystick_widget.h"
+#include "widgets/speed_display.h"
+#include "widgets/speed_dashboard.h"
+#include "widgets/battery_indicator.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QLabel>
+#include <QGroupBox>
+#include <QPushButton>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QMessageBox>
+#include <QKeyEvent>
+#include <QMap>
 
-ControlPanel::ControlPanel(const std::shared_ptr<RobotController>& robot_controller,
-                         QWidget* parent)
+class ControlPanelPrivate {
+public:
+    explicit ControlPanelPrivate(ControlPanel* q) : q_ptr(q) {}
+
+    ControlPanel* const q_ptr;
+    std::shared_ptr<RobotController> robot_controller;
+    
+    QVBoxLayout* main_layout_{nullptr};
+    QGroupBox* joystick_group_{nullptr};
+    QGroupBox* control_group_{nullptr};
+    QGroupBox* battery_group_{nullptr};
+    
+    JoystickWidget* joystick_{nullptr};
+    SpeedDisplay* speed_display_{nullptr};
+    QComboBox* control_mode_combo_{nullptr};
+    QDoubleSpinBox* speed_limit_spin_{nullptr};
+    QDoubleSpinBox* accel_limit_spin_{nullptr};
+    QPushButton* emergency_stop_button_{nullptr};
+    
+    BatteryIndicator* battery_indicator_{nullptr};
+    QLabel* battery_level_label_{nullptr};
+    QLabel* temperature_label_{nullptr};
+    QLabel* voltage_label_{nullptr};
+    QLabel* current_label_{nullptr};
+    
+    QMap<int, bool> key_pressed_;
+    bool is_controlling_{false};
+    double keyboard_linear_speed_{0.5};
+    double keyboard_angular_speed_{0.5};
+};
+
+ControlPanel::ControlPanel(const std::shared_ptr<RobotController>& controller, QWidget* parent)
     : QWidget(parent)
-    , d_ptr(std::make_unique<ControlPanelPrivate>())
+    , d_(new ControlPanelPrivate(this))
 {
-    d_ptr->robot_controller = robot_controller;
-    
-    // 初始化UI
+    d_->robot_controller = controller;
     setupUi();
-    setupCamera();
-    setupJoystick();
-    connectSignals();
-    
-    // 创建状态更新定时器
-    d_ptr->status_timer = new QTimer(this);
-    connect(d_ptr->status_timer, &QTimer::timeout, this, &ControlPanel::updateRobotStatus);
-    d_ptr->status_timer->start(1000);  // 每秒更新一次状态
+    connectSignalsAndSlots();
 }
 
 ControlPanel::~ControlPanel() = default;
 
 void ControlPanel::setupUi()
 {
-    d_ptr->main_layout = new QVBoxLayout(this);
-    d_ptr->main_layout->setContentsMargins(10, 10, 10, 10);
-    d_ptr->main_layout->setSpacing(10);
-
-    // 创建上下两个部分的布局
-    auto* top_layout = new QHBoxLayout();
-    auto* bottom_layout = new QHBoxLayout();
+    d_->main_layout_ = new QVBoxLayout(this);
     
-    // 设置样式
-    setStyleSheet(
-        "QGroupBox {"
-        "    border: 1px solid #cccccc;"
-        "    border-radius: 6px;"
-        "    margin-top: 1em;"
-        "    padding: 10px;"
-        "    background-color: #ffffff;"
-        "}"
-        "QGroupBox::title {"
-        "    subcontrol-origin: margin;"
-        "    left: 10px;"
-        "    padding: 0 3px 0 3px;"
-        "    color: #333333;"
-        "}"
-        "QPushButton {"
-        "    border: 1px solid #cccccc;"
-        "    border-radius: 4px;"
-        "    padding: 8px 16px;"
-        "    background-color: #ffffff;"
-        "    color: #333333;"
-        "}"
-        "QPushButton:hover {"
-        "    background-color: #f5f5f5;"
-        "}"
-        "QPushButton:pressed {"
-        "    background-color: #e5e5e5;"
-        "}"
-        "QLabel {"
-        "    color: #333333;"
-        "    padding: 2px;"
-        "}"
-    );
-
-    // 创建状态组
-    d_ptr->status_group = new QGroupBox(tr("机器人状态"), this);
-    auto* status_layout = new QGridLayout(d_ptr->status_group);
+    // 创建速度仪表盘组
+    d_->speed_group_ = new QGroupBox("速度显示", this);
+    auto* speed_layout = new QVBoxLayout(d_->speed_group_);
+    d_->speed_dashboard_ = new SpeedDashboard(this);
+    speed_layout->addWidget(d_->speed_dashboard_);
+    d_->main_layout_->addWidget(d_->speed_group_);
     
-    d_ptr->battery_label = new QLabel(tr("电池电量: --"), this);
-    d_ptr->voltage_label = new QLabel(tr("电压: -- V"), this);
-    d_ptr->current_label = new QLabel(tr("电流: -- A"), this);
-    d_ptr->temperature_label = new QLabel(tr("温度: -- ℃"), this);
-    d_ptr->motor_status_label = new QLabel(tr("电机状态: --"), this);
-    d_ptr->connection_status_label = new QLabel(tr("连接状态: --"), this);
+    // 创建摇杆控制组
+    d_->joystick_group_ = new QGroupBox("摇杆控制", this);
+    auto* joystick_layout = new QVBoxLayout(d_->joystick_group_);
+    d_->joystick_ = new JoystickWidget(this);
+    joystick_layout->addWidget(d_->joystick_);
+    d_->main_layout_->addWidget(d_->joystick_group_);
     
-    status_layout->addWidget(d_ptr->battery_label, 0, 0);
-    status_layout->addWidget(d_ptr->voltage_label, 0, 1);
-    status_layout->addWidget(d_ptr->current_label, 1, 0);
-    status_layout->addWidget(d_ptr->temperature_label, 1, 1);
-    status_layout->addWidget(d_ptr->motor_status_label, 2, 0);
-    status_layout->addWidget(d_ptr->connection_status_label, 2, 1);
-
-    // 创建速度控制组
-    d_ptr->speed_control_group = new QGroupBox(tr("速度控制"), this);
-    auto* speed_layout = new QHBoxLayout(d_ptr->speed_control_group);
-    speed_layout->setSpacing(20);  // 增加组件之间的间距
+    // 创建控制模式组
+    d_->control_group_ = new QGroupBox("控制设置", this);
+    auto* control_layout = new QGridLayout(d_->control_group_);
     
-    // 添加到布局
-    top_layout->addWidget(d_ptr->status_group);
-    bottom_layout->addWidget(d_ptr->speed_control_group);
+    // 控制模式选择
+    control_layout->addWidget(new QLabel("控制模式:", this), 0, 0);
+    d_->control_mode_combo_ = new QComboBox(this);
+    d_->control_mode_combo_->addItem("键盘控制");
+    d_->control_mode_combo_->addItem("摇杆控制");
+    control_layout->addWidget(d_->control_mode_combo_, 0, 1);
     
-    d_ptr->main_layout->addLayout(top_layout);
-    d_ptr->main_layout->addLayout(bottom_layout);
+    // 速度限制设置
+    control_layout->addWidget(new QLabel("速度限制:", this), 1, 0);
+    d_->speed_limit_spin_ = new QDoubleSpinBox(this);
+    d_->speed_limit_spin_->setRange(0.1, 2.0);
+    d_->speed_limit_spin_->setValue(1.0);
+    d_->speed_limit_spin_->setSingleStep(0.1);
+    control_layout->addWidget(d_->speed_limit_spin_, 1, 1);
+    
+    // 加速度限制设置
+    control_layout->addWidget(new QLabel("加速度限制:", this), 2, 0);
+    d_->accel_limit_spin_ = new QDoubleSpinBox(this);
+    d_->accel_limit_spin_->setRange(0.1, 2.0);
+    d_->accel_limit_spin_->setValue(1.0);
+    d_->accel_limit_spin_->setSingleStep(0.1);
+    control_layout->addWidget(d_->accel_limit_spin_, 2, 1);
+    
+    // 紧急停止按钮
+    d_->emergency_stop_button_ = new QPushButton("紧急停止", this);
+    d_->emergency_stop_button_->setStyleSheet("background-color: red; color: white;");
+    control_layout->addWidget(d_->emergency_stop_button_, 3, 0, 1, 2);
+    
+    d_->main_layout_->addWidget(d_->control_group_);
 }
 
-void ControlPanel::setupCamera()
+void ControlPanel::createStatusGroup()
 {
-    // 创建相机组
-    d_ptr->camera_group = new QGroupBox(tr("相机视图"), this);
-    auto* camera_layout = new QVBoxLayout(d_ptr->camera_group);
-    
-    // 创建相机取景器
-    d_ptr->viewfinder = new QCameraViewfinder(d_ptr->camera_group);
-    d_ptr->viewfinder->setMinimumSize(320, 240);
-    camera_layout->addWidget(d_ptr->viewfinder);
-    
-    // 创建相机设备选择下拉框
-    auto* device_layout = new QHBoxLayout();
-    auto* device_label = new QLabel(tr("摄像头设备:"), d_ptr->camera_group);
-    auto* device_combo = new QComboBox(d_ptr->camera_group);
-    device_combo->setMinimumWidth(150);
-    
-    // 扫描可用的视频设备
-    QDir dev_dir("/dev");
-    QStringList filters;
-    filters << "video*";  // 视频设备
-    QStringList video_devices = dev_dir.entryList(filters, QDir::System);
-    
-    if (video_devices.isEmpty()) {
-        device_combo->addItem(tr("未检测到摄像头"));
-        device_combo->setEnabled(false);
-    } else {
-        for (const QString& device : video_devices) {
-            device_combo->addItem("/dev/" + device);
-        }
-    }
-    
-    device_layout->addWidget(device_label);
-    device_layout->addWidget(device_combo);
-    device_layout->addStretch();
-    
-    // 创建相机控制按钮
-    d_ptr->camera_toggle_button = new QPushButton(tr("开启相机"), d_ptr->camera_group);
-    d_ptr->camera_toggle_button->setEnabled(!video_devices.isEmpty());
-    
-    // 添加到布局
-    camera_layout->addLayout(device_layout);
-    camera_layout->addWidget(d_ptr->camera_toggle_button);
-    
-    // 将相机组添加到主布局的顶部
-    if (auto* top_layout = qobject_cast<QHBoxLayout*>(d_ptr->main_layout->itemAt(0)->layout())) {
-        top_layout->insertWidget(0, d_ptr->camera_group, 2);  // 相机视图占2/3
-    }
-    
-    // 连接设备选择信号
-    connect(device_combo, QOverload<const QString&>::of(&QComboBox::currentTextChanged),
-            this, [this](const QString& device) {
-                if (d_ptr->camera) {
-                    d_ptr->camera->stop();
-                    delete d_ptr->camera;
-                }
-                
-                if (device.startsWith("/dev/")) {
-                    d_ptr->camera = new QCamera(device.toUtf8(), this);
-                    d_ptr->camera->setViewfinder(d_ptr->viewfinder);
-                    
-                    // 连接错误信号
-                    connect(d_ptr->camera, QOverload<QCamera::Error>::of(&QCamera::error),
-                            this, [this](QCamera::Error error) {
-                                QString error_msg;
-                                switch (error) {
-                                    case QCamera::NoError:
-                                        return;
-                                    case QCamera::CameraError:
-                                        error_msg = tr("相机错误：无法访问相机");
-                                        break;
-                                    case QCamera::InvalidRequestError:
-                                        error_msg = tr("相机错误：无效的请求");
-                                        break;
-                                    case QCamera::ServiceMissingError:
-                                        error_msg = tr("相机错误：相机服务不可用");
-                                        break;
-                                    case QCamera::NotSupportedFeatureError:
-                                        error_msg = tr("相机错误：不支持的功能");
-                                        break;
-                                    default:
-                                        error_msg = tr("相机错误：未知错误");
-                                        break;
-                                }
-                                QMessageBox::warning(this, tr("相机错误"), error_msg);
-                                d_ptr->camera_toggle_button->setText(tr("开启相机"));
-                                d_ptr->camera_toggle_button->setEnabled(true);
-                            });
-                }
-            });
+    d_->battery_group_ = new QGroupBox(tr("状态信息"), this);
+    auto* layout = new QGridLayout(d_->battery_group_);
+
+    // 电池状态显示
+    d_->battery_indicator_ = new BatteryIndicator(this);
+    layout->addWidget(d_->battery_indicator_, 0, 0, 1, 2);
+
+    // 电池详细信息
+    d_->battery_level_label_ = new QLabel(tr("电量: 100%"), this);
+    d_->temperature_label_ = new QLabel(tr("温度: 25°C"), this);
+    d_->voltage_label_ = new QLabel(tr("电压: 12.0V"), this);
+    d_->current_label_ = new QLabel(tr("电流: 0.0A"), this);
+
+    layout->addWidget(d_->battery_level_label_, 1, 0);
+    layout->addWidget(d_->temperature_label_, 1, 1);
+    layout->addWidget(d_->voltage_label_, 2, 0);
+    layout->addWidget(d_->current_label_, 2, 1);
+
+    d_->main_layout_->addWidget(d_->battery_group_);
 }
 
-void ControlPanel::setupJoystick()
+void ControlPanel::connectSignalsAndSlots()
 {
-    if (!d_ptr->speed_control_group) return;
-
-    auto* layout = qobject_cast<QHBoxLayout*>(d_ptr->speed_control_group->layout());
-    if (!layout) return;
-
-    // 创建左侧布局（摇杆和紧急停止按钮）
-    auto* left_layout = new QVBoxLayout();
-    left_layout->setSpacing(15);  // 增加垂直间距
-    
-    // 创建摇杆
-    d_ptr->joystick = std::make_shared<JoystickWidget>(d_ptr->speed_control_group);
-    d_ptr->joystick->setMinimumSize(200, 200);
-    d_ptr->joystick->setMaximumSize(300, 300);
-    left_layout->addWidget(d_ptr->joystick.get(), 0, Qt::AlignCenter);  // 居中对齐
-    
-    // 创建紧急停止按钮
-    d_ptr->emergency_stop_button = new QPushButton(tr("紧急停止"), d_ptr->speed_control_group);
-    d_ptr->emergency_stop_button->setMinimumWidth(150);  // 增加按钮宽度
-    d_ptr->emergency_stop_button->setStyleSheet(
-        "QPushButton {"
-        "    background-color: #dc3545;"
-        "    color: white;"
-        "    border: none;"
-        "    padding: 15px 30px;"  // 增加按钮内边距
-        "    border-radius: 6px;"   // 增加圆角
-        "    font-weight: bold;"    // 加粗字体
-        "    font-size: 14px;"      // 增加字体大小
-        "}"
-        "QPushButton:hover {"
-        "    background-color: #c82333;"
-        "}"
-        "QPushButton:pressed {"
-        "    background-color: #bd2130;"
-        "}"
-    );
-    left_layout->addWidget(d_ptr->emergency_stop_button, 0, Qt::AlignCenter);  // 居中对齐
-    
-    // 创建右侧布局（速度仪表盘和速度限制）
-    auto* right_layout = new QVBoxLayout();
-    right_layout->setSpacing(15);  // 增加垂直间距
-    
-    // 创建速度仪表盘
-    d_ptr->speed_dashboard = std::make_shared<SpeedDashboard>(d_ptr->speed_control_group);
-    d_ptr->speed_dashboard->setMinimumSize(250, 250);  // 增加仪表盘大小
-    d_ptr->speed_dashboard->setMaximumSize(350, 350);
-    right_layout->addWidget(d_ptr->speed_dashboard.get(), 0, Qt::AlignCenter);
-    
-    // 创建速度限制滑块组
-    auto* speed_limit_group = new QGroupBox(tr("速度限制"), d_ptr->speed_control_group);
-    speed_limit_group->setStyleSheet(
-        "QGroupBox {"
-        "    background-color: #f8f9fa;"
-        "    border: 1px solid #dee2e6;"
-        "    border-radius: 6px;"
-        "    padding: 20px;"  // 增加内边距
-        "    margin-top: 1em;"
-        "}"
-        "QGroupBox::title {"
-        "    color: #495057;"
-        "    font-weight: bold;"
-        "}"
-    );
-    auto* speed_limit_layout = new QVBoxLayout(speed_limit_group);
-    speed_limit_layout->setSpacing(15);  // 增加垂直间距
-    
-    // 线速度限制
-    auto* linear_slider = new QSlider(Qt::Horizontal, speed_limit_group);
-    linear_slider->setObjectName("linear_speed_slider");
-    linear_slider->setRange(0, 100);
-    linear_slider->setValue(50);
-    linear_slider->setStyleSheet(
-        "QSlider::groove:horizontal {"
-        "    border: 1px solid #ddd;"
-        "    background: white;"
-        "    height: 10px;"
-        "    border-radius: 5px;"
-        "}"
-        "QSlider::sub-page:horizontal {"
-        "    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,"
-        "        stop: 0 #3b82f6, stop: 1 #60a5fa);"
-        "    border: 1px solid #3b82f6;"
-        "    height: 10px;"
-        "    border-radius: 5px;"
-        "}"
-        "QSlider::add-page:horizontal {"
-        "    background: #f1f5f9;"
-        "    border: 1px solid #ddd;"
-        "    height: 10px;"
-        "    border-radius: 5px;"
-        "}"
-        "QSlider::handle:horizontal {"
-        "    background: white;"
-        "    border: 2px solid #3b82f6;"
-        "    width: 20px;"
-        "    margin-top: -6px;"
-        "    margin-bottom: -6px;"
-        "    border-radius: 10px;"
-        "}"
-        "QSlider::handle:horizontal:hover {"
-        "    background: #f8fafc;"
-        "}"
-    );
-    
-    speed_limit_layout->addWidget(linear_slider);
-    
-    // 角速度限制
-    auto* angular_slider = new QSlider(Qt::Horizontal, speed_limit_group);
-    angular_slider->setObjectName("angular_speed_slider");
-    angular_slider->setRange(0, 100);
-    angular_slider->setValue(50);
-    angular_slider->setStyleSheet(linear_slider->styleSheet());
-    
-    speed_limit_layout->addWidget(angular_slider);
-    
-    right_layout->addWidget(speed_limit_group);
-    
-    // 添加到主布局
-    layout->addLayout(left_layout, 1);    // 权重1
-    layout->addLayout(right_layout, 1);    // 权重1
-    layout->setSpacing(30);  // 增加水平间距
-
-    // 连接信号
-    connect(linear_slider, &QSlider::valueChanged, this, [this](int value) {
-        d_ptr->max_linear_speed = value / 100.0;
-    });
-
-    connect(angular_slider, &QSlider::valueChanged, this, [this](int value) {
-        d_ptr->max_angular_speed = value / 100.0 * 2.0;  // 最大2.0 rad/s
-    });
+    // 连接摇杆信号
+    connect(d_->joystick_, &JoystickWidget::linearJoystickMoved,
+            this, &ControlPanel::onJoystickMoved);
+            
+    // 连接控制模式切换信号
+    connect(d_->control_mode_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ControlPanel::onControlModeChanged);
+            
+    // 连接速度限制信号
+    connect(d_->speed_limit_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &ControlPanel::onSpeedLimitChanged);
+            
+    // 连接加速度限制信号
+    connect(d_->accel_limit_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &ControlPanel::onAccelLimitChanged);
+            
+    // 连接紧急停止信号
+    connect(d_->emergency_stop_button_, &QPushButton::clicked,
+            this, &ControlPanel::onEmergencyStop);
+            
+    // 连接速度更新信号到仪表盘
+    if (d_->robot_controller) {
+        connect(d_->robot_controller.get(), &RobotController::linearVelocityChanged,
+                d_->speed_dashboard_, &SpeedDashboard::setLinearSpeed);
+        connect(d_->robot_controller.get(), &RobotController::angularVelocityChanged,
+                d_->speed_dashboard_, &SpeedDashboard::setAngularSpeed);
+    }
 }
 
-void ControlPanel::connectSignals()
+void ControlPanel::onJoystickMoved()
 {
-    if (d_ptr->joystick) {
-        connect(d_ptr->joystick.get(), &JoystickWidget::linearJoystickMoved,
-                this, [this](double x, double y) {
-                    if (!d_ptr->robot_controller) {
-                        qWarning() << "机器人控制器未初始化";
-                        return;
-                    }
-                    double linear_vel = -y * d_ptr->max_linear_speed;
-                    d_ptr->robot_controller->setLinearVelocity(linear_vel);
-                    if (d_ptr->speed_dashboard) {
-                        d_ptr->speed_dashboard->setLinearSpeed(linear_vel);
-                    }
-                });
-
-        connect(d_ptr->joystick.get(), &JoystickWidget::angularJoystickMoved,
-                this, [this](double x, double y) {
-                    if (!d_ptr->robot_controller) {
-                        qWarning() << "机器人控制器未初始化";
-                        return;
-                    }
-                    double angular_vel = -x * d_ptr->max_angular_speed;
-                    d_ptr->robot_controller->setAngularVelocity(angular_vel);
-                    if (d_ptr->speed_dashboard) {
-                        d_ptr->speed_dashboard->setAngularSpeed(angular_vel);
-                    }
-                });
-    }
-
-    if (d_ptr->emergency_stop_button) {
-        connect(d_ptr->emergency_stop_button, &QPushButton::clicked,
-                this, &ControlPanel::onEmergencyStop);
-    }
-
-    if (d_ptr->camera_toggle_button) {
-        connect(d_ptr->camera_toggle_button, &QPushButton::clicked,
-                this, &ControlPanel::toggleCamera);
-    }
-
-    // 连接机器人控制器的信号
-    if (d_ptr->robot_controller) {
-        // 电池状态更新
-        connect(d_ptr->robot_controller.get(), &RobotController::batteryStateChanged,
-                this, &ControlPanel::updateBatteryStatus);
+    if (!d_->is_controlling_ || !d_->robot_controller)
+        return;
         
-        // 诊断信息更新
-        connect(d_ptr->robot_controller.get(), &RobotController::diagnosticsUpdated,
-                this, &ControlPanel::updateDiagnostics);
-    }
+    double linear = d_->joystick_->getLinearVelocity();
+    double angular = d_->joystick_->getAngularVelocity();
+    
+    d_->robot_controller->setLinearVelocity(linear);
+    d_->robot_controller->setAngularVelocity(angular);
+    updateVelocityDisplay(linear, angular);
+    Q_EMIT velocityChanged(linear, angular);
+}
+
+void ControlPanel::onControlModeChanged(int index)
+{
+    if (!d_->robot_controller) return;
+
+    d_->robot_controller->setControlMode(index);
+}
+
+void ControlPanel::onSpeedLimitChanged(double value)
+{
+    if (!d_->robot_controller) return;
+
+    d_->robot_controller->setMaxSpeed(value);
+}
+
+void ControlPanel::onAccelLimitChanged(double value)
+{
+    if (!d_->robot_controller) return;
+
+    d_->robot_controller->setMaxAcceleration(value);
 }
 
 void ControlPanel::onEmergencyStop()
 {
-    if (!d_ptr->robot_controller) return;
-
-    // 停止机器人
-    d_ptr->robot_controller->stop();
-
-    // 更新速度显示
-    if (d_ptr->speed_dashboard) {
-        d_ptr->speed_dashboard->setLinearSpeed(0.0);
-        d_ptr->speed_dashboard->setAngularSpeed(0.0);
+    if (d_->robot_controller) {
+        d_->robot_controller->emergencyStop();
     }
-
-    // 重置摇杆位置
-    if (d_ptr->joystick) {
-        d_ptr->joystick->reset();
-    }
+    Q_EMIT emergencyStopTriggered();
 }
 
-void ControlPanel::updateBatteryStatus(const sensor_msgs::BatteryState& status)
+void ControlPanel::setupKeyboardControl()
 {
-    d_ptr->battery_label->setText(tr("电池电量: %1%").arg(status.percentage));
-    d_ptr->voltage_label->setText(tr("电压: %1 V").arg(status.voltage, 0, 'f', 1));
-    d_ptr->current_label->setText(tr("电流: %1 A").arg(status.current, 0, 'f', 2));
-    d_ptr->temperature_label->setText(tr("温度: %1 ℃").arg(status.temperature, 0, 'f', 1));
+    // 设置焦点策略以接收键盘事件
+    setFocusPolicy(Qt::StrongFocus);
 }
 
-void ControlPanel::updateDiagnostics(const diagnostic_msgs::DiagnosticArray& diagnostics)
+void ControlPanel::updateVelocityDisplay(double linear, double angular)
 {
-    for (const auto& status : diagnostics.status) {
-        if (status.name == "motors") {
-            d_ptr->motor_status_label->setText(tr("电机状态: %1").arg(QString::fromStdString(status.message)));
-        }
+    if (d_->speed_dashboard_) {
+        d_->speed_dashboard_->setLinearSpeed(linear);
+        d_->speed_dashboard_->setAngularSpeed(angular);
     }
 }
 
-void ControlPanel::updateCameraImage(const sensor_msgs::Image& image)
+void ControlPanel::updateBatteryState(double percentage, double voltage, double current, double temperature)
 {
-    // TODO: 将ROS图像消息转换为Qt图像并显示
+    d_->battery_indicator_->setBatteryLevel(percentage);
+    d_->battery_level_label_->setText(tr("电量: %1%").arg(percentage, 0, 'f', 1));
+    d_->voltage_label_->setText(tr("电压: %1V").arg(voltage, 0, 'f', 1));
+    d_->current_label_->setText(tr("电流: %1A").arg(current, 0, 'f', 1));
+    d_->temperature_label_->setText(tr("温度: %1°C").arg(temperature, 0, 'f', 1));
 }
 
-void ControlPanel::updateSpeedDisplay(double linear, double angular)
+void ControlPanel::updateMotorStatus(const QString& status)
 {
-    if (d_ptr->speed_dashboard) {
-        d_ptr->speed_dashboard->setLinearSpeed(linear);
-        d_ptr->speed_dashboard->setAngularSpeed(angular);
-    }
+    // 可以添加电机状态显示
+    // TODO: 添加电机状态标签和显示逻辑
 }
 
-void ControlPanel::toggleCamera()
+void ControlPanel::onKeyboardControl()
 {
-    if (!d_ptr->camera) {
-        QMessageBox::warning(this, tr("错误"), tr("请先选择摄像头设备"));
+    if (!d_->robot_controller || !d_->is_controlling_) return;
+
+    double linear = 0.0;
+    double angular = 0.0;
+
+    if (d_->key_pressed_[Qt::Key_W]) linear += d_->keyboard_linear_speed_;
+    if (d_->key_pressed_[Qt::Key_S]) linear -= d_->keyboard_linear_speed_;
+    if (d_->key_pressed_[Qt::Key_A]) angular += d_->keyboard_angular_speed_;
+    if (d_->key_pressed_[Qt::Key_D]) angular -= d_->keyboard_angular_speed_;
+
+    d_->robot_controller->setLinearVelocity(linear);
+    d_->robot_controller->setAngularVelocity(angular);
+    d_->speed_display_->updateSpeed(linear, angular);
+}
+
+void ControlPanel::keyPressEvent(QKeyEvent* event)
+{
+    if (d_->control_mode_combo_->currentIndex() != 1) {
+        QWidget::keyPressEvent(event);
         return;
     }
 
-    d_ptr->camera_toggle_button->setEnabled(false);  // 禁用按钮，防止重复点击
-
-    if (d_ptr->camera->state() == QCamera::ActiveState) {
-        d_ptr->camera->stop();
-        d_ptr->camera_toggle_button->setText(tr("开启相机"));
-    } else {
-        d_ptr->camera->start();
-        if (d_ptr->camera->error() == QCamera::NoError) {
-            d_ptr->camera_toggle_button->setText(tr("关闭相机"));
-        }
+    if (!event->isAutoRepeat()) {
+        d_->key_pressed_[event->key()] = true;
+        updateKeyboardControl();
     }
-
-    d_ptr->camera_toggle_button->setEnabled(true);  // 重新启用按钮
 }
 
-void ControlPanel::updateRobotStatus()
+void ControlPanel::keyReleaseEvent(QKeyEvent* event)
 {
-    if (!d_ptr->robot_controller) {
-        qWarning() << "机器人控制器未初始化";
-        setStatusWarning(d_ptr->connection_status_label, tr("未连接"), false);
-        setStatusWarning(d_ptr->battery_label, tr("电池电量: --"), false);
-        setStatusWarning(d_ptr->voltage_label, tr("电压: -- V"), false);
-        setStatusWarning(d_ptr->current_label, tr("电流: -- A"), false);
-        setStatusWarning(d_ptr->temperature_label, tr("温度: -- ℃"), false);
-        setStatusWarning(d_ptr->motor_status_label, tr("电机状态: 未知"), false);
+    if (d_->control_mode_combo_->currentIndex() != 1) {
+        QWidget::keyReleaseEvent(event);
         return;
     }
 
-    // 更新连接状态
-    bool is_connected = d_ptr->robot_controller->isInitialized();
-    setStatusWarning(d_ptr->connection_status_label, 
-                    tr("连接状态: %1").arg(is_connected ? tr("已连接") : tr("未连接")), 
-                    is_connected);
-
-    // 如果未连接，显示警告状态
-    if (!is_connected) {
-        setStatusWarning(d_ptr->battery_label, tr("电池电量: 未连接"), false);
-        setStatusWarning(d_ptr->voltage_label, tr("电压: 未连接"), false);
-        setStatusWarning(d_ptr->current_label, tr("电流: 未连接"), false);
-        setStatusWarning(d_ptr->temperature_label, tr("温度: 未连接"), false);
-        setStatusWarning(d_ptr->motor_status_label, tr("电机状态: 未连接"), false);
-        qWarning() << "机器人未连接，无法获取状态信息";
+    if (!event->isAutoRepeat()) {
+        d_->key_pressed_[event->key()] = false;
+        updateKeyboardControl();
     }
 }
 
-// 添加一个辅助方法来设置警告状态
-void ControlPanel::setStatusWarning(QLabel* label, const QString& text, bool is_normal)
+void ControlPanel::updateKeyboardControl()
 {
-    if (!label) return;
+    double linear = 0.0;
+    double angular = 0.0;
     
-    label->setText(text);
+    if (d_->key_pressed_[Qt::Key_W]) linear += d_->keyboard_linear_speed_;
+    if (d_->key_pressed_[Qt::Key_S]) linear -= d_->keyboard_linear_speed_;
+    if (d_->key_pressed_[Qt::Key_A]) angular += d_->keyboard_angular_speed_;
+    if (d_->key_pressed_[Qt::Key_D]) angular -= d_->keyboard_angular_speed_;
     
-    QString style = QString(
-        "QLabel {"
-        "    background-color: %1;"
-        "    color: white;"
-        "    border-radius: 4px;"
-        "    padding: 5px 10px;"
-        "    font-size: 12px;"
-        "}"
-    ).arg(is_normal ? "#28a745" : "#dc3545");  // 正常为绿色，警告为红色
-    
-    label->setStyleSheet(style);
+    d_->robot_controller->setLinearVelocity(linear);
+    d_->robot_controller->setAngularVelocity(angular);
+    Q_EMIT velocityChanged(linear, angular);
+}
+
+void ControlPanel::setRobotController(const std::shared_ptr<RobotController>& controller)
+{
+    d_->robot_controller = controller;
+}
+
+void ControlPanel::handleKeyEvent(QKeyEvent* event, bool pressed)
+{
+    if (!d_->robot_controller) {
+        return;
+    }
+
+    double linear = 0.0;
+    double angular = 0.0;
+
+    if (pressed) {
+        switch (event->key()) {
+            case Qt::Key_W:
+                linear = d_->keyboard_linear_speed_;
+                break;
+            case Qt::Key_S:
+                linear = -d_->keyboard_linear_speed_;
+                break;
+            case Qt::Key_A:
+                angular = d_->keyboard_angular_speed_;
+                break;
+            case Qt::Key_D:
+                angular = -d_->keyboard_angular_speed_;
+                break;
+            default:
+                break;
+        }
+    }
+
+    d_->robot_controller->publishVelocity(linear, angular);
+}
+
+void ControlPanel::onMaxSpeedChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setMaxSpeed(value);
+    }
+}
+
+void ControlPanel::onMaxAngularSpeedChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setMaxAngularSpeed(value);
+    }
+}
+
+void ControlPanel::onMaxAccelChanged(double value)
+{
+    if (d_->robot_controller) {
+        d_->robot_controller->setMaxAcceleration(value);
+    }
 } 

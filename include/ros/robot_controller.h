@@ -1,10 +1,28 @@
+#pragma once
+
 #ifndef ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
 #define ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
 
+// Qt头文件
 #include <QObject>
 #include <QString>
-#include <vector>
+#include <QProcess>
+#include <QVariantMap>
+#include <QTimer>
+#include <QDateTime>
+#include <QMap>
+#include <QDir>
+#include <QFileInfo>
+#include <QTextStream>
+#include <QThread>
+#include <QStorageInfo>
+#include <QDebug>
+#include <QMutex>
 #include <memory>
+#include <QVariant>
+#include <array>
+
+// ROS头文件
 #include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -22,9 +40,27 @@
 #include <visualization_msgs/InteractiveMarker.h>
 #include <visualization_msgs/InteractiveMarkerControl.h>
 #include <tf/transform_listener.h>
+#include <std_msgs/Bool.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <map_msgs/OccupancyGridUpdate.h>
+#include <std_msgs/Float64.h>
 
 class RobotController : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionStateChanged)
+    Q_PROPERTY(QString robotState READ robotState NOTIFY robotStateChanged)
+    Q_PROPERTY(double batteryLevel READ batteryLevel NOTIFY batteryLevelChanged)
+    Q_PROPERTY(double batteryVoltage READ batteryVoltage NOTIFY batteryVoltageChanged)
+    Q_PROPERTY(double batteryCurrent READ batteryCurrent NOTIFY batteryCurrentChanged)
+    Q_PROPERTY(double batteryTemperature READ batteryTemperature NOTIFY batteryTemperatureChanged)
+    Q_PROPERTY(QString batteryStatus READ batteryStatus NOTIFY batteryStatusChanged)
+    Q_PROPERTY(double linearVelocity READ linearVelocity NOTIFY linearVelocityChanged)
+    Q_PROPERTY(double angularVelocity READ angularVelocity NOTIFY angularVelocityChanged)
+    Q_PROPERTY(QString navigationState READ navigationState NOTIFY navigationStateChanged)
+    Q_PROPERTY(QString localizationState READ localizationState NOTIFY localizationStateChanged)
+    Q_PROPERTY(QString mappingState READ mappingState NOTIFY mappingStateChanged)
+
 public:
     enum class NavigationState {
         IDLE,
@@ -40,62 +76,93 @@ public:
     enum class InteractionMode {
         NONE,
         SET_INITIAL_POSE,
-        SET_GOAL
+        SET_GOAL,
+        SET_NAVIGATION_GOAL
     };
     Q_ENUM(InteractionMode)
+
+    enum class MappingMethod {
+        SLAM_TOOLBOX,
+        CARTOGRAPHER,
+        GMAPPING
+    };
+    Q_ENUM(MappingMethod)
 
     explicit RobotController(QObject* parent = nullptr);
     ~RobotController() override;
 
-    bool isInitialized() const { return is_initialized_; }
-    bool isNavigating() const { return is_navigating_; }
-    bool isLocalized() const { return is_localized_; }
-    bool isMapping() const { return is_mapping_; }
-    geometry_msgs::Pose getCurrentPose() const { return current_pose_; }
+    // 初始化和清理
+    bool initialize();
+    void cleanup();
 
-    void setMasterURI(const QString& uri);
-    void setHostname(const QString& hostname);
-
-    void setInitialPose(const geometry_msgs::PoseWithCovarianceStamped& pose);
-    void setNavigationGoal(const geometry_msgs::PoseStamped& goal);
-    void enableInitialPoseSetting(bool enable);
-    void enableGoalSetting(bool enable);
-
+    // 导航控制
     void startNavigation();
     void pauseNavigation();
     void stopNavigation();
     void resumeNavigation();
-    void startAutoLocalization();
-    void stopAutoLocalization();
-    void clearCostmaps();
+    void emergencyStop();
 
-    void startGlobalLocalization();
-    void cancelGlobalLocalization();
+    // 导航设置
+    void setNavigationMode(int mode);
+    void setGlobalPlanner(const QString& planner_name);
+    void setLocalPlanner(const QString& planner_name);
 
+    // 建图控制
+    void setMappingMethod(MappingMethod method);
     void startMapping();
     void stopMapping();
     void saveMap(const QString& filename);
-    void loadMap(const QString& filename);
 
+    // 状态查询
+    QString batteryStatus() const;
+    double batteryLevel() const;
+    double batteryVoltage() const;
+    double batteryCurrent() const;
+    double batteryTemperature() const;
+
+    // 连接相关方法
+    bool testConnection(const std::string& master_uri);
+    bool isInitialized() const;
+    bool isConnected() const;
+
+    // 基本状态查询
+    bool isNavigating() const;
+    bool isLocalized() const;
+    geometry_msgs::Pose getCurrentPose() const;
+
+    // 基本设置
+    void setMasterURI(const QString& uri);
+    void setHostname(const QString& hostname);
+
+    // 导航相关方法
+    void setNavigationGoal(const geometry_msgs::PoseStamped& goal);
+    void setInitialPose(const geometry_msgs::PoseWithCovarianceStamped& pose);
+    void sendGoal(const geometry_msgs::PoseStamped& goal);
+    void startAutoLocalization();
+    void stopAutoLocalization();
+    void startGlobalLocalization();
+    void cancelGlobalLocalization();
+
+    // 速度控制
     void setLinearVelocity(double linear);
     void setAngularVelocity(double angular);
+    void setVelocity(double linear, double angular);
     void setMaxLinearVelocity(double max_linear);
     void setMaxAngularVelocity(double max_angular);
-    void emergencyStop();
-
-    double getLinearVelocity() const { return current_linear_velocity_; }
-    double getAngularVelocity() const { return current_angular_velocity_; }
-    double getMaxLinearVelocity() const { return max_linear_velocity_; }
-    double getMaxAngularVelocity() const { return max_angular_velocity_; }
-
-    double getBatteryPercentage() const { return battery_percentage_; }
-    double getBatteryVoltage() const { return battery_voltage_; }
-    double getBatteryCurrent() const { return battery_current_; }
-    double getBatteryTemperature() const { return battery_temperature_; }
-    QString getMotorStatus() const { return motor_status_; }
-
     void stop();
-    void publishVelocity(double linear, double angular);
+    void cancelGoal();
+
+    // 获取速度
+    double getLinearVelocity() const;
+    double getAngularVelocity() const;
+    double getMaxLinearVelocity() const;
+    double getMaxAngularVelocity() const;
+
+    // 电池状态
+    double getBatteryPercentage() const;
+    QString getMotorStatus() const;
+
+    // 参数设置
     void setYawTolerance(double value);
     void setInflationRadius(double value);
     void setTransformTolerance(double value);
@@ -106,158 +173,155 @@ public:
     void setPlannedPathBias(double value);
     void setRecoveryBehaviorEnabled(bool enabled);
     void setClearingRotationAllowed(bool allowed);
-    void setNavigationMode(int mode);
-    bool testConnection(const std::string& master_uri);
     void setRobotModel(const std::string& model);
     void setSerialPort(const std::string& port);
     void setBaudrate(int baudrate);
 
-    double getCurrentLinearVelocity() const { return linear_velocity_; }
-    double getCurrentAngularVelocity() const { return angular_velocity_; }
+    // 速度相关
+    double getCurrentLinearVelocity() const;
+    double getCurrentAngularVelocity() const;
+    void setPlanner(const QString& planner);
 
-    void setGlobalPlanner(const QString& planner_name);
-    void setLocalPlanner(const QString& planner_name);
+    // 地图相关
+    void loadMap(const QString& filename);
+
+    void setMaxSpeed(double speed);
+    void setMaxAcceleration(double accel);
+    void setSafetyDistance(double distance);
+    void setUpdateFrequency(int frequency);
+    void setAutoConnect(bool enabled);
+    void setDebugMode(bool enabled);
+    void setPlannerFrequency(int frequency);
+
+    void setPlanner(const std::string& planner);
+    void setResolution(double resolution);
+    void setUpdateRate(int rate);
+    void setMaxRange(double range);
+
+    // 新增方法
+    void setMaxAngularSpeed(double value);
+    void setControlMode(int mode);
+    void setPlanningFrequency(int value);
+    void setMapSize(int value);
+    void setGoalTolerance(double tolerance);
+    void setPlannerType(const QString& type);
+    void onConnectionTimeout();
+
+    // 地图相关
+    void updateMap(const QString& map_topic);
+    void updateRobotPose(const QString& pose_topic);
+    void updateLaserScan(const QString& scan_topic);
+    void updatePath(const QString& path_topic);
+
+    // 传感器相关
+    double getSensorValue(const QString& name) const;
+    bool isObstacleDetected() const;
+
+    // 获取当前状态
+    sensor_msgs::LaserScan getCurrentLaserScan() const;
+
+    QString robotState() const;
+    QString navigationState() const;
+    QString localizationState() const;
+    QString mappingState() const;
+
+    // 添加缺失的函数声明
     std::vector<QString> getAvailableGlobalPlanners() const;
     std::vector<QString> getAvailableLocalPlanners() const;
-    QString getCurrentGlobalPlanner() const { return current_global_planner_; }
-    QString getCurrentLocalPlanner() const { return current_local_planner_; }
+    QString getCurrentGlobalPlanner() const;
+    QString getCurrentLocalPlanner() const;
 
-    // 回调函数移到public
-    void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
-    void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
+    // 修改函数声明
+    void saveMappingResults();
+    void enableInitialPose(bool enable);
 
-signals:
-    void velocityChanged(double linear, double angular);
-    void batteryStateChanged(const sensor_msgs::BatteryState& state);
-    void localizationStateChanged(const QString& state);
-    void localizationProgressChanged(double progress);
-    void localizationStatusChanged(const QString& status);
+    void move(double linear_x, double linear_y, double angular_z);
+    void navigateTo(double x, double y, double theta, double tolerance = 0.1);
+    void pauseMapping();
+    void resumeMapping();
+    QVariantMap properties() const;
+
+    void stopRobot();
+    void cancelNavigation();
+    void clearCostmaps();
+    bool isLidarConnected() const;
+    bool isImuConnected() const;
+    bool isOdomConnected() const;
+
+    void enableAutoLocalization(bool enable);
+
+public Q_SLOTS:
+    void connectToROS();
+    void disconnect();
+    void setRobotModel(const QString& model);
+    void setSerialPort(const QString& port);
+    void setBaudRate(int baud_rate);
+    void setProperty(const QString& name, const QVariant& value);
+    void setBatteryStatus(const QString& status);
+
+Q_SIGNALS:
+    void connectionStateChanged(bool connected);
+    void robotStateChanged(const QString& state);
+    void batteryLevelChanged(double level);
+    void batteryVoltageChanged(double voltage);
+    void batteryCurrentChanged(double current);
+    void batteryTemperatureChanged(double temperature);
+    void batteryStatusChanged(const QString& status);
+    void linearVelocityChanged(double velocity);
+    void angularVelocityChanged(double velocity);
     void navigationStateChanged(const QString& state);
-    void navigationProgressChanged(double progress);
-    void navigationStatusChanged(const QString& status);
-    void distanceToGoalChanged(double distance);
-    void estimatedTimeToGoalChanged(double time);
-    void mapUpdated(const nav_msgs::OccupancyGrid& map);
-    void mappingStateChanged(bool is_mapping);
-    void mappingProgressChanged(double progress);
-    void navigationModeChanged(int mode);
-    void poseUpdated(const geometry_msgs::Pose& pose);
-    void laserScanUpdated(const sensor_msgs::LaserScan& scan);
-    void diagnosticsUpdated(const diagnostic_msgs::DiagnosticArray& diagnostics);
-    void goalDisplayEnabled(bool enabled);
-    void globalPlannerChanged(const QString& planner_name);
-    void localPlannerChanged(const QString& planner_name);
-    void goalSet(const geometry_msgs::PoseStamped& goal);
+    void localizationStateChanged(const QString& state);
+    void mappingStateChanged(const QString& state);
+    void navigationProgress(double progress);
+    void navigationCompleted(bool success);
+    void obstacleDetected(bool detected);
+    void scanUpdated(const sensor_msgs::LaserScan::ConstPtr& scan);
+    void poseUpdated(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose);
+    void mapUpdated(const nav_msgs::OccupancyGrid::ConstPtr& map);
+    void pathUpdated(const nav_msgs::Path::ConstPtr& path);
+    void velocityUpdated(double linear, double angular);
+    void batteryStateUpdated(double level, double voltage, double current, double temperature);
+    void error(const QString& message);
+    void connected();
+    void disconnected();
+    void navigationStarted();
+    void navigationCancelled();
+    void navigationStopped();
+    void costmapsCleared();
+    void robotModelChanged(const QString& model);
+    void serialPortChanged(const QString& port);
+    void baudrateChanged(int baudrate);
+    void autoConnectChanged(bool enabled);
+    void debugModeChanged(bool enabled);
+    void maxSpeedChanged(double speed);
+    void maxAngularSpeedChanged(double speed);
+    void maxAccelerationChanged(double accel);
+    void safetyDistanceChanged(double distance);
+    void updateFrequencyChanged(int freq);
+    void plannerTypeChanged(const QString& type);
+    void planningFrequencyChanged(int freq);
+    void goalToleranceChanged(double tolerance);
+    void laserScanUpdated(const sensor_msgs::LaserScan::ConstPtr& scan);
 
 private:
-    void cleanup();
-    void setupPublishers();
-    void setupSubscribers();
-    void setupSafety();
-    void monitorLocalization(const ros::TimerEvent&);
-
-    void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
-    void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
-    void amclPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
-    void batteryCallback(const sensor_msgs::BatteryState::ConstPtr& msg);
-    void diagnosticsCallback(const diagnostic_msgs::DiagnosticArray::ConstPtr& msg);
-    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg);
-    void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
-    
+    void publishVelocity();
     void navigationDoneCallback(const actionlib::SimpleClientGoalState& state,
                               const move_base_msgs::MoveBaseResultConstPtr& result);
     void navigationActiveCallback();
     void navigationFeedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback);
+    void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
+    void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
+    void amclPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
+    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg);
+    void mapUpdatesCallback(const map_msgs::OccupancyGridUpdate::ConstPtr& msg);
+    void pathCallback(const nav_msgs::Path::ConstPtr& msg);
+    void batteryCallback(const sensor_msgs::BatteryState::ConstPtr& msg);
 
-    ros::NodeHandle nh_;
-    ros::Publisher global_localization_pub_;
-    ros::Publisher cmd_vel_pub_;
-    ros::Publisher initial_pose_pub_;
-    ros::Publisher tool_manager_pub_;
-    ros::Publisher goal_pub_;
-    
-    ros::Subscriber odom_sub_;
-    ros::Subscriber scan_sub_;
-    ros::Subscriber laser_scan_sub_;
-    ros::Subscriber amcl_pose_sub_;
-    ros::Subscriber battery_sub_;
-    ros::Subscriber diagnostics_sub_;
-    ros::Subscriber map_sub_;
-    ros::Subscriber initial_pose_sub_;
-    ros::Subscriber goal_sub_;
+    struct Private;
+    std::unique_ptr<Private> d_;
 
-    ros::ServiceClient global_localization_client_;
-    ros::ServiceClient clear_costmaps_client_;
-    ros::Timer localization_monitor_timer_;
-
-    std::unique_ptr<actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction>> move_base_client_;
-    std::unique_ptr<interactive_markers::InteractiveMarkerServer> interactive_marker_server_;
-
-    geometry_msgs::PoseWithCovarianceStamped current_amcl_pose_;
-    boost::array<double, 36> current_pose_cov_;
-    geometry_msgs::Pose current_pose_;
-    geometry_msgs::PoseStamped current_goal_;
-    sensor_msgs::LaserScan current_scan_;
-
-    bool is_initialized_{false};
-    bool is_navigating_{false};
-    bool is_localized_{false};
-    bool is_mapping_{false};
-    bool is_localizing_{false};
-    bool is_obstacle_detected_{false};
-
-    double safety_distance_{0.3};
-    double current_linear_velocity_{0.0};
-    double current_angular_velocity_{0.0};
-    double max_linear_velocity_{1.0};
-    double max_angular_velocity_{2.0};
-    double linear_velocity_{0.0};
-    double angular_velocity_{0.0};
-
-    double battery_percentage_{0.0};
-    double battery_voltage_{0.0};
-    double battery_current_{0.0};
-    double battery_temperature_{0.0};
-    QString motor_status_;
-
-    double initial_distance_{0.0};
-    double distance_to_goal_{0.0};
-    double estimated_time_to_goal_{0.0};
-    double navigation_progress_{0.0};
-    double localization_progress_{0.0};
-    double mapping_progress_{0.0};
-
-    double yaw_tolerance_{0.1};
-    double inflation_radius_{0.3};
-    double transform_tolerance_{0.2};
-    double planner_frequency_{5.0};
-    double controller_frequency_{10.0};
-    double global_costmap_update_frequency_{5.0};
-    double local_costmap_update_frequency_{5.0};
-    double planned_path_bias_{0.8};
-    bool recovery_behavior_enabled_{true};
-    bool clearing_rotation_allowed_{true};
-    int navigation_mode_{0};
-    
-    RobotController::InteractionMode interaction_mode_{RobotController::InteractionMode::NONE};
-
-    QString current_global_planner_{"navfn/NavfnROS"};
-    QString current_local_planner_{"base_local_planner/TrajectoryPlannerROS"};
-
-    // TF相关
-    tf::TransformListener tf_listener_;
-    
-    // 自动定位相关
-    void publishLocalizationMarkers();
-    ros::Publisher marker_pub_;
-    double auto_localization_radius_;
-    geometry_msgs::Point localization_center_;
-    double current_rotation_speed_;
-    double current_linear_speed_;
-    ros::Time last_direction_change_;
-
-    // 安全相关
-    bool left_space_larger_{true};
+    bool auto_localization_enabled_{false};
+    ros::Subscriber localization_quality_sub_;
 };
 
-#endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H 
+#endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H

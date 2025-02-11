@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 启动hector_mapping节点 -->
+    <node pkg="hector_mapping" type="hector_mapping" name="hector_mapping" output="screen">
+        <!-- 基本参数设置 -->
+        <param name="base_frame" value="base_footprint" />
+        <param name="odom_frame" value="odom"/>
+        <param name="output_timing" value="false"/>
+        <param name="use_tf_scan_transformation" value="true"/>
+        <param name="use_tf_pose_start_estimate" value="false"/>
+        <param name="pub_map_scanmatch_transform" value="true"/>
+        
+        <!-- 地图参数 -->
+        <param name="map_resolution" value="0.05"/>
+        <param name="map_size" value="2048"/>
+        <param name="map_start_x" value="0.5"/>
+        <param name="map_start_y" value="0.5"/>
+        <param name="map_pub_period" value="0.5"/>
+        
+        <!-- 扫描参数 -->
+        <param name="laser_min_dist" value="0.15"/>
+        <param name="laser_max_dist" value="10.0"/>
+        <param name="laser_z_min_value" value="-1.0"/>
+        <param name="laser_z_max_value" value="1.0"/>
+        
+        <!-- 更新参数 -->
+        <param name="update_factor_free" value="0.4"/>
+        <param name="update_factor_occupied" value="0.9"/>
+        <param name="map_update_distance_thresh" value="0.2"/>
+        <param name="map_update_angle_thresh" value="0.15"/>
+    </node>
+
+    <!-- 启动hector_trajectory_server节点 -->
+    <node pkg="hector_trajectory_server" type="hector_trajectory_server" name="hector_trajectory_server" output="screen">
+        <param name="target_frame_name" value="map"/>
+        <param name="source_frame_name" value="base_footprint"/>
+        <param name="trajectory_update_rate" value="4"/>
+        <param name="trajectory_publish_rate" value="0.25"/>
+    </node>
+
+    <!-- 启动rviz可视化 -->
+    <node name="rviz" pkg="rviz" type="rviz" required="true"
+        args="-d $(find robot_control_gui)/rviz/hector_slam.rviz" />
+</launch> 

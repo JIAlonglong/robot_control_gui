@@ -1,0 +1,41 @@
+rviz:
+  # OpenGL设置
+  opengl:
+    version: 3.0
+    profile: compatibility
+    depth_buffer: 24
+    stencil_buffer: 8
+    samples: 4
+    double_buffer: true
+    software_rendering: true
+    
+  # 渲染设置
+  rendering:
+    force_no_stereo: true
+    enable_antialiasing: false
+    smooth_lines: false
+    point_cloud_rendering: false
+    framerate_limit: 30
+    max_texture_size: 1024
+    force_simple_materials: true
+    force_simple_rendering: true
+    force_no_point_cloud: true
+    background_color: [48, 48, 48]
+    default_light: true
+    shadow_mapping: false
+    
+  # 资源限制
+  resources:
+    texture_pool_size: 64
+    mesh_pool_size: 32
+    
+  # 调试选项
+  debug:
+    opengl: true
+    tf: true
+    
+  # 相机设置
+  camera:
+    use_custom_controls: false
+    speed: 1.0
+    mouse_sensitivity: 1.0 

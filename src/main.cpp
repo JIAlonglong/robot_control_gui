@@ -15,6 +15,7 @@
 #include <QThread>
 #include <memory>
 #include <csignal>
+#include <QSurfaceFormat>
 
 #include <ros/ros.h>
 #include <ros/console.h>
@@ -25,6 +26,34 @@
 int main(int argc, char *argv[])
 {
     try {
+        // 设置OpenGL环境变量
+        qputenv("LIBGL_DEBUG", "verbose");
+        qputenv("LIBGL_ALWAYS_SOFTWARE", "1");
+        qputenv("LIBGL_DRI3_DISABLE", "1");
+        qputenv("GALLIUM_DRIVER", "llvmpipe");
+        qputenv("MESA_GL_VERSION_OVERRIDE", "2.1");
+        qputenv("MESA_GLSL_VERSION_OVERRIDE", "120");
+        qputenv("QT_OPENGL", "software");
+        qputenv("QT_XCB_FORCE_SOFTWARE_OPENGL", "1");
+        qputenv("QT_QUICK_BACKEND", "software");
+        qputenv("QT_QUICK_RENDER_LOOP", "basic");
+        
+        // 配置OpenGL格式
+        QSurfaceFormat format;
+        format.setRenderableType(QSurfaceFormat::OpenGL);
+        format.setVersion(2, 1);
+        format.setProfile(QSurfaceFormat::NoProfile);
+        format.setOption(QSurfaceFormat::DeprecatedFunctions);
+        format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+        format.setRedBufferSize(8);
+        format.setGreenBufferSize(8);
+        format.setBlueBufferSize(8);
+        format.setAlphaBufferSize(8);
+        format.setDepthBufferSize(16);
+        format.setStencilBufferSize(0);
+        format.setSamples(0);
+        QSurfaceFormat::setDefaultFormat(format);
+        
         // 初始化Qt应用
         QApplication app(argc, argv);
 
@@ -33,7 +62,7 @@ int main(int argc, char *argv[])
         QCoreApplication::setApplicationName("RobotControlGUI");
 
         // 初始化ROS节点
-        ros::init(argc, argv, "robot_control_gui", ros::init_options::NoSigintHandler);
+        ros::init(argc, argv, "robot_control_gui_node");
         
         // 检查ROS Master连接
         if (!ros::master::check()) {

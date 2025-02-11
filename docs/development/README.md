@@ -4,17 +4,22 @@
 
 ```
 robot_control_gui/
-├── include/          # 头文件
-│   ├── ui/          # 界面相关头文件
-│   └── ros/         # ROS通信相关头文件
-├── src/             # 源代码
-│   ├── ui/          # 界面实现
-│   ├── ros/         # ROS通信实现
-│   ├── test/        # 测试代码
-│   └── launch/      # 启动文件
-├── config/          # 配置文件
-├── rviz/            # RViz配置
-└── docs/            # 文档
+├── include/
+│   ├── ui/                    # UI相关头文件
+│   │   ├── panels/           # 面板类头文件
+│   │   ├── widgets/          # 自定义控件头文件
+│   │   └── actions/          # 动作相关头文件
+│   └── ros/                  # ROS相关头文件
+├── src/
+│   ├── ui/                   # UI相关源文件
+│   │   ├── panels/          # 面板类源文件
+│   │   ├── widgets/         # 自定义控件源文件
+│   │   └── actions/         # 动作相关源文件
+│   └── ros/                 # ROS相关源文件
+├── resources/               # 资源文件(图标等)
+├── launch/                 # launch文件
+├── config/                # 配置文件
+└── test/                  # 测试文件
 ```
 
 ## 主要组件

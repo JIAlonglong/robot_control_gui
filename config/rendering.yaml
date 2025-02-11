@@ -1,0 +1,36 @@
+rendering:
+  # OpenGL设置
+  force_gl_version: 3.0
+  force_software_rendering: true
+  force_no_stereo: true
+  
+  # 显示选项
+  disable_stereo: true
+  enable_antialiasing: false
+  smooth_lines: false
+  point_cloud_rendering: false
+  
+  # 性能参数
+  framerate_limit: 10
+  max_texture_size: 256
+  
+  # 渲染设置
+  force_simple_materials: true
+  force_simple_rendering: true
+  force_no_point_cloud: true
+  background_color: [48, 48, 48]
+  default_light: true
+  shadow_mapping: false
+  
+  # 资源限制
+  texture_pool_size: 25
+  mesh_pool_size: 10
+  
+  # 调试选项
+  debug_opengl: true
+  debug_tf: true
+  
+  # 相机设置
+  use_custom_camera_controls: false
+  camera_speed: 1.0
+  mouse_sensitivity: 1.0 
