@@ -28,20 +28,11 @@ set(CMAKE_AUTOUIC ON)
 # 查找所需的包
 find_package(catkin REQUIRED COMPONENTS
   roscpp
-  rospy
   std_msgs
-  std_srvs
   geometry_msgs
   nav_msgs
-  sensor_msgs
-  diagnostic_msgs
-  move_base_msgs
-  actionlib
   tf2
   tf2_ros
-  cv_bridge
-  image_transport
-  rviz
 )
 
 # 查找Qt5
@@ -62,20 +53,11 @@ catkin_package(
   LIBRARIES ${PROJECT_NAME}
   CATKIN_DEPENDS 
     roscpp 
-    rospy 
     std_msgs 
-    std_srvs
     geometry_msgs 
-    nav_msgs 
-    sensor_msgs
-    diagnostic_msgs
-    move_base_msgs
-    actionlib
+    nav_msgs
     tf2
     tf2_ros
-    cv_bridge
-    image_transport
-    rviz
   DEPENDS 
     Qt5Core 
     Qt5Widgets 
@@ -90,7 +72,14 @@ catkin_package(
 
 # 设置包含目录
 include_directories(
-  include
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/ui/actions
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/ui/dialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/ui/panels
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/ui/widgets
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/ros
   ${catkin_INCLUDE_DIRS}
   ${Qt5Core_INCLUDE_DIRS}
   ${Qt5Widgets_INCLUDE_DIRS}
@@ -102,52 +91,46 @@ include_directories(
   ${Qt5OpenGL_INCLUDE_DIRS}
   ${OPENGL_INCLUDE_DIRS}
   ${GLUT_INCLUDE_DIRS}
-  ${tf2_INCLUDE_DIRS}
-  ${tf2_ros_INCLUDE_DIRS}
 )
 
-# 添加Qt编译标志
-add_definitions(${Qt5Widgets_DEFINITIONS})
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${Qt5Widgets_EXECUTABLE_COMPILE_FLAGS}")
-
-# 添加编译选项
-add_compile_options(-Wall -Wextra -Wpedantic)
-add_compile_options(-DQT_NO_KEYWORDS)
-add_compile_options(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
-
-# 添加Qt关键字支持
-remove_definitions(-DQT_NO_KEYWORDS)
-add_definitions(-DQT_WIDGETS_LIB)
-add_definitions(-DQT_GUI_LIB)
-add_definitions(-DQT_CORE_LIB)
-
-# 设置Qt的MOC选项
-set(CMAKE_AUTOMOC_MOC_OPTIONS "-DBOOST_TT_HAS_OPERATOR_HPP_INCLUDED")
-
-# 添加tf2依赖
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
-
-# 收集源文件
-file(GLOB_RECURSE SOURCE_FILES
-  src/*.cpp
+# 添加源文件
+file(GLOB_RECURSE UI_SOURCES 
+  "src/ui/panels/*.cpp"
+  "src/ui/widgets/*.cpp"
+  "src/ui/actions/*.cpp"
+  "src/ui/dialogs/*.cpp"
+  "src/ui/*.cpp"
 )
 
-# 收集头文件
-file(GLOB_RECURSE HEADER_FILES
-  include/*.h
+file(GLOB_RECURSE ROS_SOURCES
+  "src/ros/*.cpp"
 )
 
-# 创建主程序库
-add_library(${PROJECT_NAME}
-  ${SOURCE_FILES}
-  ${HEADER_FILES}
+# 添加头文件
+file(GLOB_RECURSE UI_HEADERS
+  "include/ui/panels/*.h"
+  "include/ui/widgets/*.h"
+  "include/ui/actions/*.h"
+  "include/ui/dialogs/*.h"
+  "include/ui/*.h"
 )
 
-# 添加依赖关系
-add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+file(GLOB_RECURSE ROS_HEADERS
+  "include/ros/*.h"
+)
 
-# 链接主程序库的依赖
+# 添加主程序源文件
+list(APPEND UI_SOURCES "src/main.cpp")
+
+# 创建可执行文件
+add_executable(${PROJECT_NAME}
+  ${UI_SOURCES}
+  ${ROS_SOURCES}
+  ${UI_HEADERS}
+  ${ROS_HEADERS}
+)
+
+# 链接依赖库
 target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
   Qt5::Core
@@ -160,24 +143,10 @@ target_link_libraries(${PROJECT_NAME}
   Qt5::OpenGL
   ${OPENGL_LIBRARIES}
   ${GLUT_LIBRARIES}
-  ${tf2_LIBRARIES}
-  ${tf2_ros_LIBRARIES}
-)
-
-# 创建主程序可执行文件
-add_executable(${PROJECT_NAME}_node src/main.cpp)
-
-# 添加可执行文件的依赖
-add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-
-# 链接可执行文件
-target_link_libraries(${PROJECT_NAME}_node
-  ${PROJECT_NAME}
-  ${catkin_LIBRARIES}
 )
 
 # 安装规则
-install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_node
+install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

@@ -1,47 +1,73 @@
-#include "ui/action_configurator.h"
-#include "ui/action_block_widget.h"
-#include "ui/property_editor.h"
-#include "ui/path_editor.h"
-#include "ui/path_visualizer.h"
-#include "ui/connection_line.h"
-#include "ui/action_commands.h"
-#include "ui/action_block_factory.h"
-#include "ui/action_sequence_manager.h"
-#include "ui/action_selection_dialog.h"
-#include <QVBoxLayout>
-#include <QToolBar>
+/**
+ * Copyright (c) 2024 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
+ * @file action_configurator.cpp
+ * @brief 动作配置器界面类的实现
+ * @author JIAlonglong
+ */
+
+#include "action_configurator.h"
 #include <QAction>
+#include <QComboBox>
+#include <QDebug>
+#include <QFile>
+#include <QFileDialog>
 #include <QGraphicsScene>
 #include <QGraphicsView>
-#include <QListWidget>
-#include <QUndoStack>
-#include <QUndoView>
-#include <QMessageBox>
-#include <QFileDialog>
+#include <QHBoxLayout>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QStatusBar>
 #include <QLabel>
-#include <QSplitter>
-#include <QStackedWidget>
-#include <stdexcept>
-#include <QTextBrowser>
-#include <QDebug>
-#include <QComboBox>
+#include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
-#include <QGraphicsScene>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QStatusBar>
+#include <QTextBrowser>
+#include <QToolBar>
 #include <QUndoCommand>
-#include <QFile>
-#include <QHBoxLayout>
+#include <QUndoStack>
+#include <QUndoView>
+#include <QVBoxLayout>
+#include <stdexcept>
+#include "action_block_factory.h"
+#include "action_block_widget.h"
+#include "action_commands.h"
+#include "action_selection_dialog.h"
+#include "action_sequence_manager.h"
+#include "connection_line.h"
+#include "path_editor.h"
+#include "path_visualizer.h"
+#include "property_editor.h"
 
-ActionConfigurator::ActionConfigurator(const std::shared_ptr<ActionBlockFactory>& factory, QWidget* parent)
+ActionConfigurator::ActionConfigurator(const std::shared_ptr<ActionBlockFactory>& factory,
+                                       QWidget*                                   parent)
     : QWidget(parent)
 {
-    factory_ = factory;
-    manager_ = new ActionSequenceManager();
-    undo_stack_ = new QUndoStack(this);
+    factory_         = factory;
+    manager_         = new ActionSequenceManager();
+    undo_stack_      = new QUndoStack(this);
     property_editor_ = new PropertyEditor(this);
     setupUi();
     connectSignals();
@@ -55,25 +81,25 @@ ActionConfigurator::~ActionConfigurator()
 void ActionConfigurator::setupUi()
 {
     main_layout_ = new QVBoxLayout(this);
-    
+
     // 创建工具栏
     auto* toolbar = new QToolBar(this);
     toolbar->setIconSize(QSize(32, 32));
-    
+
     // 添加动作按钮
-    add_action_button_ = new QPushButton(tr("添加动作"), this);
-    remove_action_button_ = new QPushButton(tr("删除动作"), this);
+    add_action_button_     = new QPushButton(tr("添加动作"), this);
+    remove_action_button_  = new QPushButton(tr("删除动作"), this);
     start_sequence_button_ = new QPushButton(tr("开始"), this);
-    stop_sequence_button_ = new QPushButton(tr("停止"), this);
-    
+    stop_sequence_button_  = new QPushButton(tr("停止"), this);
+
     toolbar->addWidget(add_action_button_);
     toolbar->addWidget(remove_action_button_);
     toolbar->addSeparator();
     toolbar->addWidget(start_sequence_button_);
     toolbar->addWidget(stop_sequence_button_);
-    
+
     main_layout_->addWidget(toolbar);
-    
+
     // 创建动作类型选择下拉框
     action_type_combo_ = new QComboBox(this);
     if (factory_) {
@@ -81,14 +107,14 @@ void ActionConfigurator::setupUi()
             action_type_combo_->addItem(type);
         }
     }
-    
+
     // 创建属性编辑器
     property_editor_ = new PropertyEditor(this);
-    
+
     // 创建撤销栈和视图
-    undo_stack_ = new QUndoStack(this);
+    undo_stack_     = new QUndoStack(this);
     auto* undo_view = new QUndoView(undo_stack_, this);
-    
+
     // 添加到布局
     auto* hsplitter = new QSplitter(Qt::Horizontal, this);
     hsplitter->addWidget(undo_view);
@@ -98,14 +124,18 @@ void ActionConfigurator::setupUi()
 
 void ActionConfigurator::connectSignals()
 {
-    connect(add_action_button_, &QPushButton::clicked, this, &ActionConfigurator::onAddActionClicked);
-    connect(remove_action_button_, &QPushButton::clicked, this, &ActionConfigurator::onRemoveAction);
-    connect(start_sequence_button_, &QPushButton::clicked, this, &ActionConfigurator::onStartSequence);
-    connect(stop_sequence_button_, &QPushButton::clicked, this, &ActionConfigurator::onStopSequence);
-    
+    connect(add_action_button_, &QPushButton::clicked, this,
+            &ActionConfigurator::onAddActionClicked);
+    connect(remove_action_button_, &QPushButton::clicked, this,
+            &ActionConfigurator::onRemoveAction);
+    connect(start_sequence_button_, &QPushButton::clicked, this,
+            &ActionConfigurator::onStartSequence);
+    connect(stop_sequence_button_, &QPushButton::clicked, this,
+            &ActionConfigurator::onStopSequence);
+
     if (property_editor_) {
-        connect(property_editor_, &PropertyEditor::propertyChanged,
-                this, &ActionConfigurator::onPropertyChanged);
+        connect(property_editor_, &PropertyEditor::propertyChanged, this,
+                &ActionConfigurator::onPropertyChanged);
     }
 }
 
@@ -114,12 +144,12 @@ void ActionConfigurator::onAddActionClicked()
     if (!factory_) {
         return;
     }
-    
+
     QString type = action_type_combo_->currentText();
     if (type.isEmpty()) {
         return;
     }
-    
+
     auto* action = factory_->create(type, this);
     if (action) {
         if (manager_) {
@@ -157,8 +187,8 @@ void ActionConfigurator::onStopSequence()
 
 void ActionConfigurator::onLoadConfig()
 {
-    QString fileName = QFileDialog::getOpenFileName(this,
-        tr("加载配置"), QString(), tr("JSON文件 (*.json)"));
+    QString fileName =
+        QFileDialog::getOpenFileName(this, tr("加载配置"), QString(), tr("JSON文件 (*.json)"));
     if (!fileName.isEmpty()) {
         loadConfig(fileName);
     }
@@ -166,8 +196,8 @@ void ActionConfigurator::onLoadConfig()
 
 void ActionConfigurator::onSaveConfig()
 {
-    QString fileName = QFileDialog::getSaveFileName(this,
-        tr("保存配置"), QString(), tr("JSON文件 (*.json)"));
+    QString fileName =
+        QFileDialog::getSaveFileName(this, tr("保存配置"), QString(), tr("JSON文件 (*.json)"));
     if (!fileName.isEmpty()) {
         saveConfig(fileName);
     }
@@ -176,11 +206,11 @@ void ActionConfigurator::onSaveConfig()
 void ActionConfigurator::onHelpRequested()
 {
     QMessageBox::information(this, tr("帮助"),
-        tr("这是一个用于配置机器人动作序列的工具。\n\n"
-           "1. 使用\"添加动作\"按钮添加新的动作\n"
-           "2. 设置动作的参数\n"
-           "3. 使用工具栏按钮来控制序列的执行\n"
-           "4. 可以保存和加载配置文件"));
+                             tr("这是一个用于配置机器人动作序列的工具。\n\n"
+                                "1. 使用\"添加动作\"按钮添加新的动作\n"
+                                "2. 设置动作的参数\n"
+                                "3. 使用工具栏按钮来控制序列的执行\n"
+                                "4. 可以保存和加载配置文件"));
 }
 
 void ActionConfigurator::onPropertyChanged(const QString& name, const QVariant& value)
@@ -191,7 +221,8 @@ void ActionConfigurator::onPropertyChanged(const QString& name, const QVariant& 
     }
 }
 
-void ActionConfigurator::onBlockMoved(ActionBlockWidget* widget, const QPointF& oldPos, const QPointF& newPos)
+void ActionConfigurator::onBlockMoved(ActionBlockWidget* widget, const QPointF& oldPos,
+                                      const QPointF& newPos)
 {
     // TODO: 实现动作块移动的撤销/重做
 }
@@ -290,4 +321,4 @@ void ActionConfigurator::clear()
     }
 }
 
-#include "ui/action_configurator.moc"
+#include "action_configurator.moc"

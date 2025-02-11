@@ -1,7 +1,28 @@
 /**
+ * Copyright (c) 2024 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
  * @file main_window.h
  * @brief 机器人控制系统的主窗口类
- * 
+ * @author JIAlonglong
+ *
  * 该类是整个应用程序的主界面,集成了:
  * - 机器人控制面板
  * - 导航面板
@@ -16,32 +37,32 @@
 #ifndef ROBOT_CONTROL_GUI_MAIN_WINDOW_H
 #define ROBOT_CONTROL_GUI_MAIN_WINDOW_H
 
-#include <QMainWindow>
+#include <QButtonGroup>
+#include <QDockWidget>
+#include <QEvent>
+#include <QHBoxLayout>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QStackedWidget>
-#include <QToolBar>
-#include <QStatusBar>
-#include <QButtonGroup>
-#include <memory>
-#include <QDockWidget>
+#include <QMainWindow>
 #include <QMenuBar>
-#include <QVBoxLayout>
-#include <QToolButton>
-#include <QHBoxLayout>
-#include <QSplitter>
 #include <QMessageBox>
-#include <QIcon>
-#include <QEvent>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <memory>
 
-#include "ui/control_panel.h"
-#include "ui/navigation_panel.h"
-#include "ui/mapping_panel.h"
-#include "ui/settings_panel.h"
-#include "ui/rviz_view.h"
-#include "ui/action_configurator.h"
-#include "ros/robot_controller.h"
-#include "ros/action_block_factory.h"
+#include "action_block_factory.h"
+#include "robot_controller.h"
+#include "action_configurator.h"
+#include "control_panel.h"
+#include "mapping_panel.h"
+#include "navigation_panel.h"
+#include "rviz_view.h"
+#include "settings_panel.h"
 
 class RobotController;
 class MappingController;
@@ -53,7 +74,8 @@ class RVizView;
 class ActionConfigurator;
 class ActionBlockFactory;
 
-class MainWindow : public QMainWindow {
+class MainWindow : public QMainWindow
+{
     Q_OBJECT
 
 public:
@@ -61,7 +83,7 @@ public:
      * @brief 构造函数
      * @param parent 父窗口部件
      */
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
 protected:
@@ -176,18 +198,19 @@ private:
     void updateDockWidgets();
     void saveDockState();
     void restoreDockState();
-    QDockWidget* createDockWidget(const QString& title, QWidget* widget, QDockWidget::DockWidgetFeatures features);
+    QDockWidget* createDockWidget(const QString& title, QWidget* widget,
+                                  QDockWidget::DockWidgetFeatures features);
 
     struct Private {
-        QToolBar* tool_bar_{nullptr};
+        QToolBar*       tool_bar_{nullptr};
         QStackedWidget* stacked_widget_{nullptr};
-        QLabel* connection_label_{nullptr};
-        QLabel* status_label_{nullptr};
-        QLabel* battery_label_{nullptr};
-        QLabel* robot_status_label_{nullptr};
-        QStatusBar* status_bar_{nullptr};
-        QButtonGroup* button_group_{nullptr};
-        QVBoxLayout* main_layout_{nullptr};
+        QLabel*         connection_label_{nullptr};
+        QLabel*         status_label_{nullptr};
+        QLabel*         battery_label_{nullptr};
+        QLabel*         robot_status_label_{nullptr};
+        QStatusBar*     status_bar_{nullptr};
+        QButtonGroup*   button_group_{nullptr};
+        QVBoxLayout*    main_layout_{nullptr};
 
         QAction* navigation_action_{nullptr};
         QAction* mapping_action_{nullptr};
@@ -197,10 +220,10 @@ private:
         QAction* action_config_action_{nullptr};
 
         NavigationPanel* navigation_panel_{nullptr};
-        MappingPanel* mapping_panel_{nullptr};
-        ControlPanel* control_panel_{nullptr};
-        SettingsPanel* settings_panel_{nullptr};
-        RVizView* rviz_view_{nullptr};
+        MappingPanel*    mapping_panel_{nullptr};
+        ControlPanel*    control_panel_{nullptr};
+        SettingsPanel*   settings_panel_{nullptr};
+        RVizView*        rviz_view_{nullptr};
 
         QDockWidget* navigation_dock_{nullptr};
         QDockWidget* control_dock_{nullptr};
@@ -208,11 +231,11 @@ private:
         QDockWidget* settings_dock_{nullptr};
         QDockWidget* action_config_dock_{nullptr};
 
-        std::shared_ptr<RobotController> robot_controller_;
+        std::shared_ptr<RobotController>    robot_controller_;
         std::shared_ptr<ActionBlockFactory> action_factory_;
     };
 
     std::unique_ptr<Private> d_;
 };
 
-#endif // ROBOT_CONTROL_GUI_MAIN_WINDOW_H 
+#endif  // ROBOT_CONTROL_GUI_MAIN_WINDOW_H

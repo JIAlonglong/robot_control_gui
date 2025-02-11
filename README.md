@@ -2,6 +2,9 @@
 
 这是一个基于 ROS 和 Qt 的 TurtleBot3 机器人控制界面，提供了直观的可视化控制和状态监控功能。
 
+## 信号流图
+![Signal Flow Graph](docs/images/signal_flow.png)
+
 ## ✨ 功能特性
 
 ### 🎮 机器人控制
@@ -169,7 +172,7 @@ roslaunch robot_control_gui robot_control_gui.launch
 
 ## 联系方式
 - 邮箱：jialonglongliu@gmail.com
-- GitHub：https://github.com/JIAlonglong 
+
 
 ## 信号流图
 

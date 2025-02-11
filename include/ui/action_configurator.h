@@ -1,7 +1,28 @@
 /**
+ * Copyright (c) 2024 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
  * @file action_configurator.h
  * @brief 动作配置器界面类,用于可视化编辑和配置机器人动作序列
- * 
+ * @author JIAlonglong
+ *
  * ActionConfigurator类提供了一个图形化界面,用于:
  * - 创建和编辑机器人动作序列
  * - 可视化动作流程图
@@ -14,32 +35,32 @@
 #ifndef ROBOT_CONTROL_GUI_ACTION_CONFIGURATOR_H
 #define ROBOT_CONTROL_GUI_ACTION_CONFIGURATOR_H
 
-#include <QWidget>
-#include <QPoint>
-#include <QString>
-#include <QVariant>
-#include <QMap>
-#include <memory>
-#include <QIcon>
-#include <QVariantMap>
-#include <QJsonObject>
-#include <QComboBox>
-#include <QPushButton>
-#include <QUndoStack>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGraphicsView>
-#include <QGraphicsScene>
-#include <QToolBar>
 #include <QAction>
+#include <QComboBox>
 #include <QDockWidget>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QJsonObject>
 #include <QLabel>
-#include <QProgressBar>
-#include <QStatusBar>
+#include <QList>
+#include <QMap>
 #include <QMenu>
 #include <QMenuBar>
-#include <QList>
+#include <QPoint>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QSettings>
+#include <QStatusBar>
+#include <QString>
+#include <QToolBar>
+#include <QUndoStack>
+#include <QVBoxLayout>
+#include <QVariant>
+#include <QVariantMap>
+#include <QWidget>
+#include <memory>
 
 class ActionBlock;
 class ActionBlockFactory;
@@ -53,7 +74,8 @@ class WaypointWidget;
  * @class ActionConfigurator
  * @brief 动作配置器类,用于创建和管理动作序列
  */
-class ActionConfigurator : public QWidget {
+class ActionConfigurator : public QWidget
+{
     Q_OBJECT
 
 public:
@@ -62,8 +84,9 @@ public:
      * @param factory 动作块工厂实例
      * @param parent 父窗口部件
      */
-    explicit ActionConfigurator(const std::shared_ptr<ActionBlockFactory>& factory, QWidget* parent = nullptr);
-    
+    explicit ActionConfigurator(const std::shared_ptr<ActionBlockFactory>& factory,
+                                QWidget*                                   parent = nullptr);
+
     /**
      * @brief 析构函数
      */
@@ -103,7 +126,7 @@ public:
      */
     void showHelp();
 
-    void setAction(ActionBlock* action);
+    void         setAction(ActionBlock* action);
     ActionBlock* currentAction() const;
 
     void setupUi();
@@ -168,14 +191,14 @@ protected:
 
 private:
     QJsonObject saveToJson() const;
-    void loadFromJson(const QJsonObject& obj);
+    void        loadFromJson(const QJsonObject& obj);
 
     std::shared_ptr<ActionBlockFactory> factory_;
-    ActionSequenceManager* manager_{nullptr};
-    ActionBlock* current_action_{nullptr};
-    
+    ActionSequenceManager*              manager_{nullptr};
+    ActionBlock*                        current_action_{nullptr};
+
     QPushButton* add_button_{nullptr};
-    QComboBox* action_combo_{nullptr};
+    QComboBox*   action_combo_{nullptr};
     QPushButton* start_button_{nullptr};
     QPushButton* pause_button_{nullptr};
     QPushButton* resume_button_{nullptr};
@@ -183,8 +206,8 @@ private:
     QPushButton* load_button_{nullptr};
     QPushButton* save_button_{nullptr};
     QPushButton* help_button_{nullptr};
-    
-    QUndoStack* undo_stack_{nullptr};
+
+    QUndoStack*     undo_stack_{nullptr};
     PropertyEditor* property_editor_{nullptr};
 
     QVBoxLayout* main_layout_{nullptr};
@@ -192,7 +215,7 @@ private:
     QPushButton* remove_action_button_{nullptr};
     QPushButton* start_sequence_button_{nullptr};
     QPushButton* stop_sequence_button_{nullptr};
-    QComboBox* action_type_combo_{nullptr};
+    QComboBox*   action_type_combo_{nullptr};
 };
 
-#endif // ROBOT_CONTROL_GUI_ACTION_CONFIGURATOR_H 
+#endif  // ROBOT_CONTROL_GUI_ACTION_CONFIGURATOR_H

@@ -1,52 +1,79 @@
+/**
+ * Copyright (c) 2024 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
+ * @file robot_controller.h
+ * @brief 机器人控制器类的头文件
+ * @author JIAlonglong
+ */
+
 #pragma once
 
 #ifndef ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
 #define ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
 
 // Qt头文件
-#include <QObject>
-#include <QString>
-#include <QProcess>
-#include <QVariantMap>
-#include <QTimer>
 #include <QDateTime>
-#include <QMap>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QMap>
+#include <QMutex>
+#include <QObject>
+#include <QProcess>
+#include <QStorageInfo>
+#include <QString>
 #include <QTextStream>
 #include <QThread>
-#include <QStorageInfo>
-#include <QDebug>
-#include <QMutex>
-#include <memory>
+#include <QTimer>
 #include <QVariant>
+#include <QVariantMap>
 #include <array>
+#include <memory>
 
 // ROS头文件
-#include <ros/ros.h>
+#include <actionlib/client/simple_action_client.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <geometry_msgs/Twist.h>
-#include <nav_msgs/Path.h>
-#include <nav_msgs/Odometry.h>
-#include <nav_msgs/OccupancyGrid.h>
-#include <sensor_msgs/LaserScan.h>
-#include <sensor_msgs/BatteryState.h>
-#include <diagnostic_msgs/DiagnosticArray.h>
-#include <actionlib/client/simple_action_client.h>
-#include <move_base_msgs/MoveBaseAction.h>
-#include <std_srvs/Empty.h>
 #include <interactive_markers/interactive_marker_server.h>
-#include <visualization_msgs/InteractiveMarker.h>
-#include <visualization_msgs/InteractiveMarkerControl.h>
-#include <tf/transform_listener.h>
+#include <map_msgs/OccupancyGridUpdate.h>
+#include <move_base_msgs/MoveBaseAction.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
+#include <ros/ros.h>
+#include <sensor_msgs/BatteryState.h>
+#include <sensor_msgs/LaserScan.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Float64.h>
+#include <std_srvs/Empty.h>
+#include <tf/transform_listener.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
-#include <map_msgs/OccupancyGridUpdate.h>
-#include <std_msgs/Float64.h>
+#include <visualization_msgs/InteractiveMarker.h>
+#include <visualization_msgs/InteractiveMarkerControl.h>
 
-class RobotController : public QObject {
+class RobotController : public QObject
+{
     Q_OBJECT
     Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionStateChanged)
     Q_PROPERTY(QString robotState READ robotState NOTIFY robotStateChanged)
@@ -62,30 +89,13 @@ class RobotController : public QObject {
     Q_PROPERTY(QString mappingState READ mappingState NOTIFY mappingStateChanged)
 
 public:
-    enum class NavigationState {
-        IDLE,
-        ACTIVE,
-        PAUSED,
-        STOPPED,
-        CANCELLED,
-        SUCCEEDED,
-        FAILED
-    };
+    enum class NavigationState { IDLE, ACTIVE, PAUSED, STOPPED, CANCELLED, SUCCEEDED, FAILED };
     Q_ENUM(NavigationState)
 
-    enum class InteractionMode {
-        NONE,
-        SET_INITIAL_POSE,
-        SET_GOAL,
-        SET_NAVIGATION_GOAL
-    };
+    enum class InteractionMode { NONE, SET_INITIAL_POSE, SET_GOAL, SET_NAVIGATION_GOAL };
     Q_ENUM(InteractionMode)
 
-    enum class MappingMethod {
-        SLAM_TOOLBOX,
-        CARTOGRAPHER,
-        GMAPPING
-    };
+    enum class MappingMethod { SLAM_TOOLBOX, CARTOGRAPHER, GMAPPING };
     Q_ENUM(MappingMethod)
 
     explicit RobotController(QObject* parent = nullptr);
@@ -115,10 +125,10 @@ public:
 
     // 状态查询
     QString batteryStatus() const;
-    double batteryLevel() const;
-    double batteryVoltage() const;
-    double batteryCurrent() const;
-    double batteryTemperature() const;
+    double  batteryLevel() const;
+    double  batteryVoltage() const;
+    double  batteryCurrent() const;
+    double  batteryTemperature() const;
 
     // 连接相关方法
     bool testConnection(const std::string& master_uri);
@@ -126,8 +136,8 @@ public:
     bool isConnected() const;
 
     // 基本状态查询
-    bool isNavigating() const;
-    bool isLocalized() const;
+    bool                isNavigating() const;
+    bool                isLocalized() const;
     geometry_msgs::Pose getCurrentPose() const;
 
     // 基本设置
@@ -159,7 +169,7 @@ public:
     double getMaxAngularVelocity() const;
 
     // 电池状态
-    double getBatteryPercentage() const;
+    double  getBatteryPercentage() const;
     QString getMotorStatus() const;
 
     // 参数设置
@@ -180,7 +190,7 @@ public:
     // 速度相关
     double getCurrentLinearVelocity() const;
     double getCurrentAngularVelocity() const;
-    void setPlanner(const QString& planner);
+    void   setPlanner(const QString& planner);
 
     // 地图相关
     void loadMap(const QString& filename);
@@ -215,7 +225,7 @@ public:
 
     // 传感器相关
     double getSensorValue(const QString& name) const;
-    bool isObstacleDetected() const;
+    bool   isObstacleDetected() const;
 
     // 获取当前状态
     sensor_msgs::LaserScan getCurrentLaserScan() const;
@@ -228,17 +238,17 @@ public:
     // 添加缺失的函数声明
     std::vector<QString> getAvailableGlobalPlanners() const;
     std::vector<QString> getAvailableLocalPlanners() const;
-    QString getCurrentGlobalPlanner() const;
-    QString getCurrentLocalPlanner() const;
+    QString              getCurrentGlobalPlanner() const;
+    QString              getCurrentLocalPlanner() const;
 
     // 修改函数声明
     void saveMappingResults();
     void enableInitialPose(bool enable);
 
-    void move(double linear_x, double linear_y, double angular_z);
-    void navigateTo(double x, double y, double theta, double tolerance = 0.1);
-    void pauseMapping();
-    void resumeMapping();
+    void        move(double linear_x, double linear_y, double angular_z);
+    void        navigateTo(double x, double y, double theta, double tolerance = 0.1);
+    void        pauseMapping();
+    void        resumeMapping();
     QVariantMap properties() const;
 
     void stopRobot();
@@ -305,8 +315,8 @@ Q_SIGNALS:
 
 private:
     void publishVelocity();
-    void navigationDoneCallback(const actionlib::SimpleClientGoalState& state,
-                              const move_base_msgs::MoveBaseResultConstPtr& result);
+    void navigationDoneCallback(const actionlib::SimpleClientGoalState&       state,
+                                const move_base_msgs::MoveBaseResultConstPtr& result);
     void navigationActiveCallback();
     void navigationFeedbackCallback(const move_base_msgs::MoveBaseFeedbackConstPtr& feedback);
     void laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
@@ -320,8 +330,8 @@ private:
     struct Private;
     std::unique_ptr<Private> d_;
 
-    bool auto_localization_enabled_{false};
+    bool            auto_localization_enabled_{false};
     ros::Subscriber localization_quality_sub_;
 };
 
-#endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
+#endif  // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H

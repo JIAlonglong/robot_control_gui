@@ -1,29 +1,50 @@
 /**
+ * Copyright (c) 2024 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
  * @file main.cpp
  * @brief 主程序入口
+ * @author JIAlonglong
  */
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
-#include <QTextStream>
-#include <QDateTime>
-#include <QStandardPaths>
 #include <QMessageBox>
-#include <QTimer>
-#include <QThread>
-#include <memory>
-#include <csignal>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
+#include <QTextStream>
+#include <QThread>
+#include <QTimer>
+#include <csignal>
+#include <memory>
 
-#include <ros/ros.h>
 #include <ros/console.h>
+#include <ros/ros.h>
 
-#include "ui/main_window.h"
 #include "ros/robot_controller.h"
+#include "ui/main_window.h"
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     try {
         // 设置OpenGL环境变量
@@ -37,7 +58,7 @@ int main(int argc, char *argv[])
         qputenv("QT_XCB_FORCE_SOFTWARE_OPENGL", "1");
         qputenv("QT_QUICK_BACKEND", "software");
         qputenv("QT_QUICK_RENDER_LOOP", "basic");
-        
+
         // 配置OpenGL格式
         QSurfaceFormat format;
         format.setRenderableType(QSurfaceFormat::OpenGL);
@@ -53,7 +74,7 @@ int main(int argc, char *argv[])
         format.setStencilBufferSize(0);
         format.setSamples(0);
         QSurfaceFormat::setDefaultFormat(format);
-        
+
         // 初始化Qt应用
         QApplication app(argc, argv);
 
@@ -63,11 +84,11 @@ int main(int argc, char *argv[])
 
         // 初始化ROS节点
         ros::init(argc, argv, "robot_control_gui_node");
-        
+
         // 检查ROS Master连接
         if (!ros::master::check()) {
             QMessageBox::critical(nullptr, QObject::tr("错误"),
-                QObject::tr("无法连接到ROS Master，请确保roscore正在运行。"));
+                                  QObject::tr("无法连接到ROS Master，请确保roscore正在运行。"));
             return 1;
         }
 
@@ -75,28 +96,28 @@ int main(int argc, char *argv[])
         ros::NodeHandle nh;
         if (!nh.ok()) {
             QMessageBox::critical(nullptr, QObject::tr("错误"),
-                QObject::tr("ROS节点句柄初始化失败。"));
+                                  QObject::tr("ROS节点句柄初始化失败。"));
             return 1;
         }
 
         // 等待必要的ROS节点和服务就绪
         ROS_INFO("等待必要的ROS节点和服务就绪...");
-        ros::Time start = ros::Time::now();
+        ros::Time     start = ros::Time::now();
         ros::Duration timeout(10.0);  // 最多等待10秒
-        bool services_ready = false;
+        bool          services_ready = false;
 
         while (ros::ok() && (ros::Time::now() - start) < timeout) {
             // 检查必要的服务和话题
             bool has_robot_description = ros::param::has("robot_description");
-            bool has_move_base = ros::service::exists("/move_base/make_plan", false);
-            
+            bool has_move_base         = ros::service::exists("/move_base/make_plan", false);
+
             // 使用ros::master::getTopics来检查话题
             std::vector<ros::master::TopicInfo> topics;
             ros::master::getTopics(topics);
-            
+
             bool has_map_server = false;
-            bool has_amcl = false;
-            
+            bool has_amcl       = false;
+
             for (const auto& topic : topics) {
                 if (topic.name == "/map") {
                     has_map_server = true;
@@ -113,7 +134,8 @@ int main(int argc, char *argv[])
             }
 
             // 输出等待状态
-            ROS_INFO_THROTTLE(1, "等待ROS节点就绪: robot_description=%d, move_base=%d, map_server=%d, amcl=%d",
+            ROS_INFO_THROTTLE(
+                1, "等待ROS节点就绪: robot_description=%d, move_base=%d, map_server=%d, amcl=%d",
                 has_robot_description, has_move_base, has_map_server, has_amcl);
 
             ros::Duration(0.1).sleep();
@@ -122,14 +144,14 @@ int main(int argc, char *argv[])
 
         if (!services_ready) {
             QMessageBox::warning(nullptr, QObject::tr("警告"),
-                QObject::tr("部分ROS节点或服务未就绪，部分功能可能不可用。"));
+                                 QObject::tr("部分ROS节点或服务未就绪，部分功能可能不可用。"));
         }
 
         // 创建定时器用于处理ROS消息
         std::unique_ptr<QTimer> ros_timer = std::make_unique<QTimer>();
         if (!ros_timer) {
             QMessageBox::critical(nullptr, QObject::tr("错误"),
-                QObject::tr("无法创建ROS消息处理定时器。"));
+                                  QObject::tr("无法创建ROS消息处理定时器。"));
             return 1;
         }
 
@@ -157,7 +179,7 @@ int main(int argc, char *argv[])
         } catch (const std::exception& e) {
             ROS_ERROR("主窗口创建失败: %s", e.what());
             QMessageBox::critical(nullptr, QObject::tr("错误"),
-                QObject::tr("主窗口创建失败: %1").arg(e.what()));
+                                  QObject::tr("主窗口创建失败: %1").arg(e.what()));
             return 1;
         }
 
@@ -184,8 +206,8 @@ int main(int argc, char *argv[])
     } catch (const std::exception& e) {
         ROS_ERROR("程序发生异常: %s", e.what());
         QMessageBox::critical(nullptr, QObject::tr("错误"),
-            QObject::tr("程序启动失败: %1").arg(e.what()));
+                              QObject::tr("程序启动失败: %1").arg(e.what()));
         ros::shutdown();
         return 1;
     }
-} 
+}
