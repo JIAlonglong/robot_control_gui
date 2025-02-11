@@ -1,0 +1,37 @@
+---
+Language: Cpp
+# 基于Google风格
+BasedOnStyle: Google
+# 缩进宽度为4
+IndentWidth: 4
+# 访问说明符(public/private等)的偏移
+AccessModifierOffset: -4
+# 括号换行样式
+BreakBeforeBraces: Linux
+# 构造函数初始化列表格式
+BreakConstructorInitializers: BeforeComma
+# 允许短函数放在一行
+AllowShortFunctionsOnASingleLine: Empty
+# 对齐连续的赋值
+AlignConsecutiveAssignments: true
+# 对齐连续的声明
+AlignConsecutiveDeclarations: true
+# 对齐尾随注释
+AlignTrailingComments: true
+# 允许函数声明的所有参数在放在下一行
+AllowAllParametersOfDeclarationOnNextLine: true
+# 指针和引用的对齐
+PointerAlignment: Left
+# 命名空间缩进
+NamespaceIndentation: None
+# 保持块的开始和结束的空行
+KeepEmptyLinesAtTheStartOfBlocks: true
+# 最大连续空行数
+MaxEmptyLinesToKeep: 2
+# 在注释中使用@brief等Doxygen命令
+CommentPragmas: '^ IWYU pragma:'
+# 包含块的排序
+IncludeBlocks: Preserve
+# 列限制
+ColumnLimit: 100
+--- 
