@@ -1,0 +1,35 @@
+# 构建和临时文件
+build/
+devel/
+logs/
+.catkin_tools/
+*.pyc
+__pycache__/
+
+# IDE和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git相关
+.git/
+.gitignore
+
+# Docker相关
+.docker/
+*.dockerfile
+.dockerignore
+
+# 文档和其他
+docs/
+*.md
+LICENSE
+*.txt
+!CMakeLists.txt
+!package.xml
+
+# 测试文件
+test/
+tests/
+*.test 

@@ -32,7 +32,52 @@
 - Ubuntu 20.04
 - ROS Noetic
 - Qt 5.12+
+- OpenGL 2.1+
 - TurtleBot3 相关包
+
+## 🐳 使用Docker
+
+为了简化安装过程,我们提供了预配置的Docker镜像。
+
+### 拉取镜像
+```bash
+docker pull jialonglong/robot_control_gui:latest
+```
+
+### 运行容器
+```bash
+# 允许Docker访问X服务器
+xhost +local:docker
+
+# 运行容器
+docker run -it --rm \
+    --network host \
+    --privileged \
+    -e DISPLAY=$DISPLAY \
+    -e QT_X11_NO_MITSHM=1 \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v $HOME/.Xauthority:/root/.Xauthority \
+    -v /dev:/dev \
+    jialonglong/robot_control_gui:latest
+
+# 运行结束后关闭X服务器访问
+xhost -local:docker
+```
+
+### 开发模式
+如果需要在容器中进行开发,可以挂载源代码目录:
+```bash
+docker run -it --rm \
+    --network host \
+    --privileged \
+    -e DISPLAY=$DISPLAY \
+    -e QT_X11_NO_MITSHM=1 \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v $HOME/.Xauthority:/root/.Xauthority \
+    -v /dev:/dev \
+    -v $(pwd):/root/catkin_ws/src/robot_control_gui \
+    jialonglong/robot_control_gui:latest
+```
 
 ## 📦 安装
 

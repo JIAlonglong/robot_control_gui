@@ -1,0 +1,37 @@
+version: '3'
+
+services:
+  robot_control_gui:
+    build: .
+    image: jialonglong/robot_control_gui:latest
+    container_name: robot_control_gui
+    network_mode: host
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - TURTLEBOT3_MODEL=burger
+      - LAUNCH_SIMULATION=true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/root/.Xauthority
+      - /dev:/dev
+    devices:
+      - /dev/dri:/dev/dri  # GPU访问
+    restart: unless-stopped
+
+  # 可选: 添加仿真环境服务
+  gazebo:
+    image: osrf/ros:noetic-desktop-full
+    container_name: gazebo_sim
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - TURTLEBOT3_MODEL=burger
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/root/.Xauthority
+    command: roslaunch turtlebot3_gazebo turtlebot3_world.launch
+    depends_on:
+      - robot_control_gui 
