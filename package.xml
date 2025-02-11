@@ -18,6 +18,7 @@
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>diagnostic_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>move_base_msgs</depend>
@@ -51,4 +52,8 @@
   <!-- Testing -->
   <test_depend>rostest</test_depend>
   <test_depend>gtest</test_depend>
+
+  <!-- Added rospy dependency -->
+  <build_depend>rospy</build_depend>
+  <exec_depend>rospy</exec_depend>
 </package>

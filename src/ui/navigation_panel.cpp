@@ -4,423 +4,626 @@
  */
 
 #include "ui/navigation_panel.h"
+#include "ui/rviz_view.h"
+#include "ui/planner_settings_dialog.h"
+#include "ui/goal_setting_dialog.h"
 #include "ros/robot_controller.h"
+#include <QWidget>
+#include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QGridLayout>
-#include <QFileDialog>
-#include <QMessageBox>
-#include <QTabWidget>
-#include <QGroupBox>
-#include <QDoubleValidator>
+#include <QPushButton>
+#include <QLabel>
+#include <QProgressBar>
+#include <QKeyEvent>
+#include <QTimer>
+#include <QDebug>
+#include <QString>
+#include <QMetaObject>
+
+class NavigationPanel::NavigationPanelPrivate {
+public:
+    NavigationPanelPrivate(NavigationPanel* q) : q_ptr(q) {}
+
+    NavigationPanel* q_ptr;
+    std::shared_ptr<RobotController> robot_controller;
+
+    // Navigation tools
+    QPushButton* set_initial_pose_button{nullptr};
+    QPushButton* auto_localization_button{nullptr};
+    QPushButton* set_goal_button{nullptr};
+    QPushButton* cancel_goal_button{nullptr};
+    QPushButton* planner_settings_button{nullptr};
+
+    // Navigation control
+    QPushButton* start_navigation_button{nullptr};
+    QPushButton* pause_navigation_button{nullptr};
+    QPushButton* stop_navigation_button{nullptr};
+    QPushButton* emergency_stop_button{nullptr};
+
+    // Status display
+    QLabel* localization_status_label{nullptr};
+    QLabel* navigation_status_label{nullptr};
+    QProgressBar* localization_progress_bar{nullptr};
+    QProgressBar* navigation_progress_bar{nullptr};
+    QLabel* distance_label{nullptr};
+    QLabel* estimated_time_label{nullptr};
+    QLabel* linear_velocity_label{nullptr};
+    QLabel* angular_velocity_label{nullptr};
+
+    // Keyboard control
+    std::map<int, bool> key_pressed_;
+    double keyboard_linear_speed_{0.5};
+    double keyboard_angular_speed_{1.0};
+
+    // Localization
+    QTimer* localization_timer{nullptr};
+    bool is_localizing_{false};
+
+    // RVizView
+    std::shared_ptr<RVizView> rviz_view;
+};
 
 NavigationPanel::NavigationPanel(std::shared_ptr<RobotController> robot_controller, QWidget* parent)
     : QWidget(parent)
-    , robot_controller_(robot_controller)
-    , is_mapping_(false)
-    , has_map_(false)
-    , is_navigating_(false)
+    , d_ptr(new NavigationPanelPrivate(this))
 {
-    createUI();
-    setupStyle();
-    updateButtonStates();
+    d_ptr->robot_controller = robot_controller;
+    setupUi();
+    setupJoystick();
+    setupKeyboardControl();
+    connectSignalsAndSlots();
+    setFocusPolicy(Qt::StrongFocus);
 }
 
-void NavigationPanel::createUI()
+NavigationPanel::~NavigationPanel()
 {
-    // 创建主布局
-    QVBoxLayout* main_layout = new QVBoxLayout(this);
+    if (d_ptr->localization_timer) {
+        d_ptr->localization_timer->stop();
+        delete d_ptr->localization_timer;
+    }
+}
+
+void NavigationPanel::setupUi()
+{
+    auto* main_layout = new QVBoxLayout(this);
+    main_layout->setContentsMargins(0, 0, 0, 0);
+    main_layout->setSpacing(10);
     
-    // 创建标签页
-    tab_widget_ = new QTabWidget(this);
-    createNavigationTab();
-    createMappingTab();
-    createSettingsTab();
+    // Navigation tools group
+    auto* tools_group = new QGroupBox("导航工具", this);
+    auto* tools_layout = new QHBoxLayout(tools_group);
     
-    main_layout->addWidget(tab_widget_);
-}
-
-void NavigationPanel::createNavigationTab()
-{
-    QWidget* nav_tab = new QWidget();
-    QVBoxLayout* layout = new QVBoxLayout(nav_tab);
-
-    // 创建目标点设置组
-    QGroupBox* goal_group = new QGroupBox("目标点设置", nav_tab);
-    QGridLayout* goal_layout = new QGridLayout(goal_group);
-
-    x_input_ = new QLineEdit(goal_group);
-    y_input_ = new QLineEdit(goal_group);
-    theta_input_ = new QLineEdit(goal_group);
+    d_ptr->set_initial_pose_button = new QPushButton("设置初始位姿", this);
+    d_ptr->auto_localization_button = new QPushButton("自动定位", this);
+    d_ptr->set_goal_button = new QPushButton("设置目标点", this);
+    d_ptr->cancel_goal_button = new QPushButton("取消目标点", this);
+    d_ptr->planner_settings_button = new QPushButton("规划器设置", this);
+    d_ptr->planner_settings_button->setToolTip("设置全局和局部路径规划器");
     
-    // 设置数值验证器
-    QDoubleValidator* validator = new QDoubleValidator(this);
-    x_input_->setValidator(validator);
-    y_input_->setValidator(validator);
-    theta_input_->setValidator(validator);
-
-    goal_layout->addWidget(new QLabel("X (米):"), 0, 0);
-    goal_layout->addWidget(x_input_, 0, 1);
-    goal_layout->addWidget(new QLabel("Y (米):"), 1, 0);
-    goal_layout->addWidget(y_input_, 1, 1);
-    goal_layout->addWidget(new QLabel("角度 (弧度):"), 2, 0);
-    goal_layout->addWidget(theta_input_, 2, 1);
-
-    // 创建导航模式选择
-    QHBoxLayout* mode_layout = new QHBoxLayout();
-    mode_layout->addWidget(new QLabel("导航模式:"));
-    navigation_mode_ = new QComboBox(nav_tab);
-    navigation_mode_->addItem("默认导航");
-    navigation_mode_->addItem("快速导航");
-    navigation_mode_->addItem("精确导航");
-    mode_layout->addWidget(navigation_mode_);
-
-    // 创建控制按钮
-    QHBoxLayout* btn_layout = new QHBoxLayout();
-    set_goal_btn_ = new QPushButton("设置目标", nav_tab);
-    cancel_btn_ = new QPushButton("取消导航", nav_tab);
-    btn_layout->addWidget(set_goal_btn_);
-    btn_layout->addWidget(cancel_btn_);
-
-    // 创建状态显示
-    status_label_ = new QLabel("就绪", nav_tab);
-    status_label_->setAlignment(Qt::AlignCenter);
-
-    // 组装布局
-    layout->addWidget(goal_group);
-    layout->addLayout(mode_layout);
-    layout->addLayout(btn_layout);
-    layout->addWidget(status_label_);
-    layout->addStretch();
-
-    // 连接信号
-    connect(set_goal_btn_, &QPushButton::clicked, this, &NavigationPanel::onSetGoalClicked);
-    connect(cancel_btn_, &QPushButton::clicked, this, &NavigationPanel::onCancelNavigationClicked);
-    connect(navigation_mode_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &NavigationPanel::onNavigationModeChanged);
-
-    tab_widget_->addTab(nav_tab, "导航控制");
-}
-
-void NavigationPanel::createMappingTab()
-{
-    QWidget* map_tab = new QWidget();
-    QVBoxLayout* layout = new QVBoxLayout(map_tab);
-
-    // 创建建图控制组
-    QGroupBox* mapping_group = new QGroupBox("建图控制", map_tab);
-    QVBoxLayout* mapping_layout = new QVBoxLayout(mapping_group);
-
-    start_mapping_btn_ = new QPushButton("开始建图", mapping_group);
-    stop_mapping_btn_ = new QPushButton("停止建图", mapping_group);
-    mapping_status_ = new QLabel("未开始建图", mapping_group);
-    mapping_status_->setAlignment(Qt::AlignCenter);
-
-    mapping_layout->addWidget(start_mapping_btn_);
-    mapping_layout->addWidget(stop_mapping_btn_);
-    mapping_layout->addWidget(mapping_status_);
-
-    // 创建地图操作组
-    QGroupBox* map_ops_group = new QGroupBox("地图操作", map_tab);
-    QVBoxLayout* map_ops_layout = new QVBoxLayout(map_ops_group);
-
-    save_map_btn_ = new QPushButton("保存地图", map_ops_group);
-    load_map_btn_ = new QPushButton("加载地图", map_ops_group);
-    set_initial_pose_btn_ = new QPushButton("设置初始位姿", map_ops_group);
-
-    map_ops_layout->addWidget(save_map_btn_);
-    map_ops_layout->addWidget(load_map_btn_);
-    map_ops_layout->addWidget(set_initial_pose_btn_);
-
-    // 组装布局
-    layout->addWidget(mapping_group);
-    layout->addWidget(map_ops_group);
-    layout->addStretch();
-
-    // 连接信号
-    connect(start_mapping_btn_, &QPushButton::clicked, this, &NavigationPanel::onStartMappingClicked);
-    connect(stop_mapping_btn_, &QPushButton::clicked, this, &NavigationPanel::onStopMappingClicked);
-    connect(save_map_btn_, &QPushButton::clicked, this, &NavigationPanel::onSaveMapClicked);
-    connect(load_map_btn_, &QPushButton::clicked, this, &NavigationPanel::onLoadMapClicked);
-    connect(set_initial_pose_btn_, &QPushButton::clicked, this, &NavigationPanel::onInitialPoseClicked);
-
-    tab_widget_->addTab(map_tab, "建图");
-}
-
-void NavigationPanel::createSettingsTab()
-{
-    QWidget* settings_tab = new QWidget();
-    QVBoxLayout* layout = new QVBoxLayout(settings_tab);
-
-    // 创建导航参数组
-    QGroupBox* nav_params_group = new QGroupBox("导航参数", settings_tab);
-    QGridLayout* params_layout = new QGridLayout(nav_params_group);
-
-    max_vel_linear_ = new QLineEdit(nav_params_group);
-    max_vel_angular_ = new QLineEdit(nav_params_group);
-    min_obstacle_dist_ = new QLineEdit(nav_params_group);
+    tools_layout->addWidget(d_ptr->set_initial_pose_button);
+    tools_layout->addWidget(d_ptr->auto_localization_button);
+    tools_layout->addWidget(d_ptr->set_goal_button);
+    tools_layout->addWidget(d_ptr->cancel_goal_button);
+    tools_layout->addWidget(d_ptr->planner_settings_button);
     
-    // 设置数值验证器
-    QDoubleValidator* validator = new QDoubleValidator(0.0, 10.0, 2, this);
-    max_vel_linear_->setValidator(validator);
-    max_vel_angular_->setValidator(validator);
-    min_obstacle_dist_->setValidator(validator);
+    main_layout->addWidget(tools_group);
 
-    params_layout->addWidget(new QLabel("最大线速度 (m/s):"), 0, 0);
-    params_layout->addWidget(max_vel_linear_, 0, 1);
-    params_layout->addWidget(new QLabel("最大角速度 (rad/s):"), 1, 0);
-    params_layout->addWidget(max_vel_angular_, 1, 1);
-    params_layout->addWidget(new QLabel("最小避障距离 (m):"), 2, 0);
-    params_layout->addWidget(min_obstacle_dist_, 2, 1);
+    // Navigation control group
+    auto* control_group = new QGroupBox("导航控制", this);
+    auto* control_layout = new QHBoxLayout(control_group);
+    
+    d_ptr->start_navigation_button = new QPushButton(tr("开始导航"), this);
+    d_ptr->start_navigation_button->setObjectName("start_navigation_button");
+    d_ptr->start_navigation_button->setEnabled(false);
+    d_ptr->pause_navigation_button = new QPushButton("暂停导航", this);
+    d_ptr->stop_navigation_button = new QPushButton("停止导航", this);
+    d_ptr->emergency_stop_button = new QPushButton("紧急停止", this);
+    d_ptr->emergency_stop_button->setStyleSheet("background-color: red; color: white;");
+    
+    control_layout->addWidget(d_ptr->start_navigation_button);
+    control_layout->addWidget(d_ptr->pause_navigation_button);
+    control_layout->addWidget(d_ptr->stop_navigation_button);
+    control_layout->addWidget(d_ptr->emergency_stop_button);
+    
+    main_layout->addWidget(control_group);
 
-    // 创建其他设置组
-    QGroupBox* other_settings_group = new QGroupBox("其他设置", settings_tab);
-    QVBoxLayout* other_layout = new QVBoxLayout(other_settings_group);
-
-    enable_recovery_ = new QCheckBox("启用恢复行为", other_settings_group);
-    update_costmap_btn_ = new QPushButton("更新代价地图", other_settings_group);
-
-    other_layout->addWidget(enable_recovery_);
-    other_layout->addWidget(update_costmap_btn_);
-
-    // 组装布局
-    layout->addWidget(nav_params_group);
-    layout->addWidget(other_settings_group);
-    layout->addStretch();
-
-    // 连接信号
-    connect(update_costmap_btn_, &QPushButton::clicked, this, &NavigationPanel::onCostmapUpdateClicked);
-
-    tab_widget_->addTab(settings_tab, "设置");
+    // Status display group
+    auto* status_group = new QGroupBox("状态显示", this);
+    auto* status_layout = new QVBoxLayout(status_group);
+    
+    d_ptr->localization_status_label = new QLabel("定位状态: 未定位", this);
+    d_ptr->navigation_status_label = new QLabel("导航状态: 未开始", this);
+    d_ptr->localization_progress_bar = new QProgressBar(this);
+    d_ptr->navigation_progress_bar = new QProgressBar(this);
+    d_ptr->distance_label = new QLabel("距离目标点: 0.00 米", this);
+    d_ptr->estimated_time_label = new QLabel("预计到达时间: 0.0 秒", this);
+    d_ptr->linear_velocity_label = new QLabel("线速度: 0.00 m/s", this);
+    d_ptr->angular_velocity_label = new QLabel("角速度: 0.00 rad/s", this);
+    
+    status_layout->addWidget(d_ptr->localization_status_label);
+    status_layout->addWidget(d_ptr->navigation_status_label);
+    status_layout->addWidget(d_ptr->localization_progress_bar);
+    status_layout->addWidget(d_ptr->navigation_progress_bar);
+    status_layout->addWidget(d_ptr->distance_label);
+    status_layout->addWidget(d_ptr->estimated_time_label);
+    status_layout->addWidget(d_ptr->linear_velocity_label);
+    status_layout->addWidget(d_ptr->angular_velocity_label);
+    
+    main_layout->addWidget(status_group);
 }
 
-void NavigationPanel::setupStyle()
+void NavigationPanel::setupJoystick()
 {
-    setStyleSheet(R"(
-        QGroupBox {
-            font-weight: bold;
-            border: 1px solid #cccccc;
-            border-radius: 6px;
-            margin-top: 6px;
-            padding-top: 10px;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 7px;
-            padding: 0px 5px 0px 5px;
-        }
-        QLineEdit {
-            padding: 5px;
-            border: 1px solid #cccccc;
-            border-radius: 3px;
-        }
-        QPushButton {
-            padding: 8px;
-            margin: 2px;
-            background-color: #f0f0f0;
-            border: 1px solid #cccccc;
-            border-radius: 3px;
-        }
-        QPushButton:hover {
-            background-color: #e0e0e0;
-        }
-        QLabel {
-            margin: 2px;
-        }
-    )");
+    // TODO: Implement joystick setup
 }
 
-void NavigationPanel::updateButtonStates()
+void NavigationPanel::setupKeyboardControl()
 {
-    // 更新导航相关按钮状态
-    set_goal_btn_->setEnabled(has_map_ && !is_mapping_);
-    cancel_btn_->setEnabled(is_navigating_);
-    navigation_mode_->setEnabled(!is_navigating_);
-
-    // 更新建图相关按钮状态
-    start_mapping_btn_->setEnabled(!is_mapping_ && !is_navigating_);
-    stop_mapping_btn_->setEnabled(is_mapping_);
-    save_map_btn_->setEnabled(has_map_);
-    load_map_btn_->setEnabled(!is_mapping_);
-    set_initial_pose_btn_->setEnabled(has_map_ && !is_mapping_);
-
-    // 更新设置相关按钮状态
-    update_costmap_btn_->setEnabled(has_map_);
-    max_vel_linear_->setEnabled(!is_navigating_);
-    max_vel_angular_->setEnabled(!is_navigating_);
-    min_obstacle_dist_->setEnabled(!is_navigating_);
-    enable_recovery_->setEnabled(!is_navigating_);
+    d_ptr->key_pressed_[Qt::Key_W] = false;
+    d_ptr->key_pressed_[Qt::Key_S] = false;
+    d_ptr->key_pressed_[Qt::Key_A] = false;
+    d_ptr->key_pressed_[Qt::Key_D] = false;
+    
+    // 设置默认速度
+    d_ptr->keyboard_linear_speed_ = 0.2;  // 默认线速度 0.2 m/s
+    d_ptr->keyboard_angular_speed_ = 0.5; // 默认角速度 0.5 rad/s
 }
 
-void NavigationPanel::updateNavigationState()
+void NavigationPanel::connectSignalsAndSlots()
 {
-    is_navigating_ = robot_controller_->isNavigating();
-    status_label_->setText(is_navigating_ ? "正在导航..." : "就绪");
-    updateButtonStates();
-    emit navigationStateChanged(is_navigating_);
-}
-
-void NavigationPanel::updateMapState(bool has_map)
-{
-    has_map_ = has_map;
-    updateButtonStates();
-    emit mapUpdated();
-}
-
-void NavigationPanel::updatePoseEstimate(double x, double y, double theta)
-{
-    // 更新位姿估计显示
-    QString pose_text = QString("当前位置: (%.2f, %.2f, %.2f)").arg(x).arg(y).arg(theta);
-    status_label_->setText(pose_text);
-}
-
-void NavigationPanel::onSetGoalClicked()
-{
-    bool ok;
-    double x = x_input_->text().toDouble(&ok);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "X坐标格式无效");
+    if (!d_ptr->robot_controller) {
+        ROS_ERROR("Robot controller not initialized");
         return;
     }
+
+    ROS_INFO("Connecting signals and slots in NavigationPanel");
+
+    // 连接RobotController的信号
+    connect(d_ptr->robot_controller.get(), &RobotController::localizationStateChanged,
+            this, &NavigationPanel::onLocalizationStateChanged);
+    connect(d_ptr->robot_controller.get(), &RobotController::localizationProgressChanged,
+            this, &NavigationPanel::onLocalizationProgressChanged);
+    connect(d_ptr->robot_controller.get(), &RobotController::localizationStatusChanged,
+            this, &NavigationPanel::updateLocalizationStatus);
+    connect(d_ptr->robot_controller.get(), &RobotController::navigationStateChanged,
+            this, &NavigationPanel::onNavigationStateChanged);
+    connect(d_ptr->robot_controller.get(), &RobotController::navigationProgressChanged,
+            this, &NavigationPanel::onNavigationProgressChanged);
+    connect(d_ptr->robot_controller.get(), &RobotController::navigationStatusChanged,
+            this, &NavigationPanel::onNavigationStatusChanged);
     
-    double y = y_input_->text().toDouble(&ok);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "Y坐标格式无效");
-        return;
-    }
-    
-    double theta = theta_input_->text().toDouble(&ok);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "角度格式无效");
-        return;
-    }
-    
-    if (robot_controller_->setNavigationGoal(x, y, theta)) {
-        is_navigating_ = true;
-        status_label_->setText("正在导航...");
-        updateButtonStates();
-        emit navigationStateChanged(true);
+    // 连接目标点设置信号
+    connect(d_ptr->robot_controller.get(), &RobotController::goalSet,
+            this, [this](const geometry_msgs::PoseStamped& goal) {
+                ROS_INFO("Goal set signal received in NavigationPanel");
+                if (d_ptr->start_navigation_button) {
+                    d_ptr->start_navigation_button->setEnabled(true);
+                    ROS_INFO("Start navigation button enabled in NavigationPanel");
+                } else {
+                    ROS_ERROR("Start navigation button is null in NavigationPanel!");
+                }
+                
+                // 更新导航状态
+                onNavigationStateChanged("就绪");
+                ROS_INFO("Navigation state updated to '就绪'");
+                
+                // 更新状态标签
+                QString status_msg = QString("已设置导航目标: (%1, %2)")
+                    .arg(goal.pose.position.x, 0, 'f', 3)
+                    .arg(goal.pose.position.y, 0, 'f', 3);
+                onNavigationStatusChanged(status_msg);
+                ROS_INFO_STREAM("Status updated: " << status_msg.toStdString());
+            });
+
+    // 连接按钮点击事件
+    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onSetInitialPose);
+    connect(d_ptr->auto_localization_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onAutoLocalization);
+    connect(d_ptr->set_goal_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onSetGoal);
+    connect(d_ptr->cancel_goal_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onCancelGoal);
+    connect(d_ptr->start_navigation_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onStartNavigation);
+    connect(d_ptr->pause_navigation_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onPauseNavigation);
+    connect(d_ptr->stop_navigation_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onStopNavigation);
+    connect(d_ptr->emergency_stop_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onEmergencyStop);
+    connect(d_ptr->planner_settings_button, &QPushButton::clicked, 
+            this, &NavigationPanel::onPlannerSettings);
+
+    ROS_INFO("All signals and slots connected in NavigationPanel");
+}
+
+void NavigationPanel::onSetInitialPose()
+{
+    if (d_ptr->rviz_view) {
+        d_ptr->rviz_view->activateInitialPoseTool();
+        ROS_INFO("Activated initial pose tool from NavigationPanel");
     } else {
-        QMessageBox::warning(this, "错误", "设置导航目标失败");
+        ROS_ERROR("RVizView not set in NavigationPanel");
     }
 }
 
-void NavigationPanel::onCancelNavigationClicked()
+void NavigationPanel::onAutoLocalization()
 {
-    robot_controller_->cancelNavigation();
-    is_navigating_ = false;
-    status_label_->setText("导航已取消");
-    updateButtonStates();
-    emit navigationStateChanged(false);
+    if (!d_ptr->robot_controller) return;
+
+    if (!d_ptr->is_localizing_) {
+        // 开始自动定位
+        d_ptr->robot_controller->startAutoLocalization();
+        d_ptr->auto_localization_button->setText(tr("停止自动定位"));
+        d_ptr->is_localizing_ = true;
+        ROS_INFO("Started auto localization");
+    } else {
+        // 停止自动定位
+        d_ptr->robot_controller->stopAutoLocalization();
+        d_ptr->auto_localization_button->setText(tr("自动定位"));
+        d_ptr->is_localizing_ = false;
+        ROS_INFO("Stopped auto localization");
+    }
 }
 
-void NavigationPanel::onSaveMapClicked()
+void NavigationPanel::onSetGoal()
 {
-    QString filename = QFileDialog::getSaveFileName(
-        this,
-        "保存地图",
-        QString(),
-        "地图文件 (*.pgm *.yaml);;所有文件 (*.*)"
-    );
+    if (!d_ptr->robot_controller) {
+        ROS_ERROR("Robot controller not initialized");
+        return;
+    }
+
+    // 获取当前机器人位置作为参考
+    geometry_msgs::Pose current_pose = d_ptr->robot_controller->getCurrentPose();
     
-    if (!filename.isEmpty()) {
-        if (robot_controller_->saveMap(filename.toStdString())) {
-            QMessageBox::information(this, "成功", "地图保存成功");
-        } else {
-            QMessageBox::warning(this, "错误", "保存地图失败");
+    // 创建并显示目标点设置对话框
+    GoalSettingDialog dialog(current_pose, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        // 获取用户设置的目标点
+        geometry_msgs::PoseStamped goal = dialog.getGoal();
+        
+        // 设置导航目标点
+        d_ptr->robot_controller->setNavigationGoal(goal);
+        ROS_INFO("Set navigation goal from panel");
+    }
+}
+
+void NavigationPanel::onCancelGoal()
+{
+    if (d_ptr->robot_controller) {
+        d_ptr->robot_controller->stopNavigation();
+    }
+}
+
+void NavigationPanel::onStartNavigation()
+{
+    if (d_ptr->robot_controller) {
+        d_ptr->robot_controller->startNavigation();
+    }
+}
+
+void NavigationPanel::onPauseNavigation()
+{
+    if (d_ptr->robot_controller) {
+        d_ptr->robot_controller->pauseNavigation();
+    }
+}
+
+void NavigationPanel::onStopNavigation()
+{
+    if (d_ptr->robot_controller) {
+        d_ptr->robot_controller->stopNavigation();
+    }
+}
+
+void NavigationPanel::onNavigationStateChanged(const QString& state)
+{
+    if (!d_ptr->navigation_status_label) return;
+    
+    d_ptr->navigation_status_label->setText("导航状态: " + state);
+    
+    // 根据状态更新按钮状态
+    if (state == "就绪") {
+        // 当状态为就绪时，启用开始导航按钮
+        if (d_ptr->start_navigation_button) {
+            d_ptr->start_navigation_button->setEnabled(true);
+            ROS_INFO("Navigation start button enabled");
+        }
+        if (d_ptr->stop_navigation_button) {
+            d_ptr->stop_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->pause_navigation_button) {
+            d_ptr->pause_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->set_goal_button) {
+            d_ptr->set_goal_button->setEnabled(true);
+        }
+    } else if (state == "进行中") {
+        if (d_ptr->start_navigation_button) {
+            d_ptr->start_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->stop_navigation_button) {
+            d_ptr->stop_navigation_button->setEnabled(true);
+        }
+        if (d_ptr->pause_navigation_button) {
+            d_ptr->pause_navigation_button->setEnabled(true);
+        }
+        if (d_ptr->set_goal_button) {
+            d_ptr->set_goal_button->setEnabled(false);
+        }
+    } else if (state == "已暂停") {
+        if (d_ptr->start_navigation_button) {
+            d_ptr->start_navigation_button->setEnabled(true);
+        }
+        if (d_ptr->stop_navigation_button) {
+            d_ptr->stop_navigation_button->setEnabled(true);
+        }
+        if (d_ptr->pause_navigation_button) {
+            d_ptr->pause_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->set_goal_button) {
+            d_ptr->set_goal_button->setEnabled(true);
+        }
+    } else if (state == "已完成" || state == "已停止" || state == "已取消" || state == "已中止") {
+        if (d_ptr->start_navigation_button) {
+            d_ptr->start_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->stop_navigation_button) {
+            d_ptr->stop_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->pause_navigation_button) {
+            d_ptr->pause_navigation_button->setEnabled(false);
+        }
+        if (d_ptr->set_goal_button) {
+            d_ptr->set_goal_button->setEnabled(true);
+        }
+    }
+    
+    ROS_INFO_STREAM("Navigation state changed to: " << state.toStdString());
+}
+
+void NavigationPanel::onLocalizationStateChanged(const QString& state)
+{
+    if (state == "已完成" || state == "已取消") {
+        // 重置自动定位按钮状态
+        d_ptr->is_localizing_ = false;
+        d_ptr->auto_localization_button->setText(tr("自动定位"));
+        d_ptr->auto_localization_button->setEnabled(true);
+        d_ptr->set_initial_pose_button->setEnabled(true);
+        ROS_INFO("Reset auto localization button state");
+    }
+    
+    if (d_ptr->localization_status_label) {
+        d_ptr->localization_status_label->setText("定位状态: " + state);
+    }
+}
+
+void NavigationPanel::onLocalizationProgressChanged(double progress)
+{
+    updateLocalizationProgress(progress);
+}
+
+void NavigationPanel::updateLocalizationProgress(double progress)
+{
+    if (d_ptr->localization_progress_bar) {
+        d_ptr->localization_progress_bar->setValue(static_cast<int>(progress));
+        if (progress >= 100.0) {
+            updateLocalizationStatus("定位完成");
+            d_ptr->set_initial_pose_button->setEnabled(true);
+            d_ptr->auto_localization_button->setEnabled(false);
         }
     }
 }
 
-void NavigationPanel::onLoadMapClicked()
+void NavigationPanel::onNavigationProgressChanged(double progress)
 {
-    QString filename = QFileDialog::getOpenFileName(
-        this,
-        "加载地图",
-        QString(),
-        "地图文件 (*.pgm *.yaml);;所有文件 (*.*)"
-    );
+    if (d_ptr->navigation_progress_bar) {
+        d_ptr->navigation_progress_bar->setValue(static_cast<int>(progress * 100));
+    }
+}
+
+void NavigationPanel::onDistanceToGoalChanged(double distance)
+{
+    if (d_ptr->distance_label) {
+        d_ptr->distance_label->setText(QString("距离目标点: %1 米").arg(distance, 0, 'f', 2));
+    }
+}
+
+void NavigationPanel::onEstimatedTimeToGoalChanged(double time)
+{
+    if (d_ptr->estimated_time_label) {
+        d_ptr->estimated_time_label->setText(QString("预计到达时间: %1 秒").arg(time, 0, 'f', 1));
+    }
+}
+
+void NavigationPanel::updateVelocityDisplay(double linear, double angular)
+{
+    if (d_ptr->linear_velocity_label) {
+        d_ptr->linear_velocity_label->setText(QString("线速度: %1 m/s").arg(linear, 0, 'f', 2));
+    }
+    if (d_ptr->angular_velocity_label) {
+        d_ptr->angular_velocity_label->setText(QString("角速度: %1 rad/s").arg(angular, 0, 'f', 2));
+    }
+}
+
+void NavigationPanel::onEmergencyStop()
+{
+    if (!d_ptr->robot_controller) return;
     
-    if (!filename.isEmpty()) {
-        if (robot_controller_->loadMap(filename.toStdString())) {
-            has_map_ = true;
-            QMessageBox::information(this, "成功", "地图加载成功");
-            updateButtonStates();
-            emit mapUpdated();
-        } else {
-            QMessageBox::warning(this, "错误", "加载地图失败");
+    // 停止所有运动
+    d_ptr->robot_controller->publishVelocity(0.0, 0.0);
+    
+    // 重置所有按键状态
+    d_ptr->key_pressed_[Qt::Key_W] = false;
+    d_ptr->key_pressed_[Qt::Key_S] = false;
+    d_ptr->key_pressed_[Qt::Key_A] = false;
+    d_ptr->key_pressed_[Qt::Key_D] = false;
+    
+    // 更新显示
+    d_ptr->linear_velocity_label->setText("线速度: 0.00 m/s");
+    d_ptr->angular_velocity_label->setText("角速度: 0.00 rad/s");
+}
+
+void NavigationPanel::onJoystickMoved()
+{
+    // TODO: Implement joystick movement handling
+}
+
+void NavigationPanel::keyPressEvent(QKeyEvent* event)
+{
+    if (!event->isAutoRepeat()) {
+        switch (event->key()) {
+            case Qt::Key_W:
+                d_ptr->key_pressed_[Qt::Key_W] = true;
+                break;
+            case Qt::Key_S:
+                d_ptr->key_pressed_[Qt::Key_S] = true;
+                break;
+            case Qt::Key_A:
+                d_ptr->key_pressed_[Qt::Key_A] = true;
+                break;
+            case Qt::Key_D:
+                d_ptr->key_pressed_[Qt::Key_D] = true;
+                break;
+            case Qt::Key_Space:  // 空格键作为紧急停止
+                onEmergencyStop();
+                break;
+            case Qt::Key_Up:     // 增加线速度
+                d_ptr->keyboard_linear_speed_ = std::min(d_ptr->keyboard_linear_speed_ + 0.1, 1.0);
+                break;
+            case Qt::Key_Down:   // 减小线速度
+                d_ptr->keyboard_linear_speed_ = std::max(d_ptr->keyboard_linear_speed_ - 0.1, 0.1);
+                break;
+            case Qt::Key_Left:   // 增加角速度
+                d_ptr->keyboard_angular_speed_ = std::min(d_ptr->keyboard_angular_speed_ + 0.1, 2.0);
+                break;
+            case Qt::Key_Right:  // 减小角速度
+                d_ptr->keyboard_angular_speed_ = std::max(d_ptr->keyboard_angular_speed_ - 0.1, 0.1);
+                break;
         }
+        updateKeyboardVelocity();
     }
+    QWidget::keyPressEvent(event);
 }
 
-void NavigationPanel::onStartMappingClicked()
+void NavigationPanel::keyReleaseEvent(QKeyEvent* event)
 {
-    if (robot_controller_->startMapping()) {
-        is_mapping_ = true;
-        mapping_status_->setText("正在建图...");
-        updateButtonStates();
-    } else {
-        QMessageBox::warning(this, "错误", "启动建图失败");
+    if (!event->isAutoRepeat()) {
+        switch (event->key()) {
+            case Qt::Key_W:
+                d_ptr->key_pressed_[Qt::Key_W] = false;
+                break;
+            case Qt::Key_S:
+                d_ptr->key_pressed_[Qt::Key_S] = false;
+                break;
+            case Qt::Key_A:
+                d_ptr->key_pressed_[Qt::Key_A] = false;
+                break;
+            case Qt::Key_D:
+                d_ptr->key_pressed_[Qt::Key_D] = false;
+                break;
+        }
+        updateKeyboardVelocity();
     }
+    QWidget::keyReleaseEvent(event);
 }
 
-void NavigationPanel::onStopMappingClicked()
+void NavigationPanel::updateKeyboardVelocity()
 {
-    if (robot_controller_->stopMapping()) {
-        is_mapping_ = false;
-        has_map_ = true;
-        mapping_status_->setText("建图完成");
-        updateButtonStates();
-        emit mapUpdated();
-    } else {
-        QMessageBox::warning(this, "错误", "停止建图失败");
+    if (!d_ptr->robot_controller) return;
+    
+    double linear = 0.0;
+    double angular = 0.0;
+    
+    if (d_ptr->key_pressed_[Qt::Key_W]) {
+        linear += d_ptr->keyboard_linear_speed_;
     }
-}
-
-void NavigationPanel::onInitialPoseClicked()
-{
-    bool ok;
-    double x = x_input_->text().toDouble(&ok);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "X坐标格式无效");
-        return;
+    if (d_ptr->key_pressed_[Qt::Key_S]) {
+        linear -= d_ptr->keyboard_linear_speed_;
+    }
+    if (d_ptr->key_pressed_[Qt::Key_A]) {
+        angular += d_ptr->keyboard_angular_speed_;
+    }
+    if (d_ptr->key_pressed_[Qt::Key_D]) {
+        angular -= d_ptr->keyboard_angular_speed_;
     }
     
-    double y = y_input_->text().toDouble(&ok);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "Y坐标格式无效");
-        return;
-    }
+    d_ptr->robot_controller->publishVelocity(linear, angular);
     
-    double theta = theta_input_->text().toDouble(&ok);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "角度格式无效");
-        return;
-    }
-    
-    if (robot_controller_->setInitialPose(x, y, theta)) {
-        QMessageBox::information(this, "成功", "初始位姿设置成功");
-    } else {
-        QMessageBox::warning(this, "错误", "设置初始位姿失败");
-    }
+    // 更新速度显示
+    d_ptr->linear_velocity_label->setText(QString("线速度: %1 m/s").arg(linear, 0, 'f', 2));
+    d_ptr->angular_velocity_label->setText(QString("角速度: %1 rad/s").arg(angular, 0, 'f', 2));
 }
 
 void NavigationPanel::onNavigationModeChanged(int index)
 {
-    if (robot_controller_->setNavigationMode(index)) {
-        QMessageBox::information(this, "成功", "导航模式切换成功");
-    } else {
-        QMessageBox::warning(this, "错误", "导航模式切换失败");
-        // 恢复之前的选择
-        navigation_mode_->setCurrentIndex(robot_controller_->getNavigationMode());
+    if (d_ptr->robot_controller) {
+        d_ptr->robot_controller->setNavigationMode(index);
     }
 }
 
-void NavigationPanel::onCostmapUpdateClicked()
+void NavigationPanel::updateLocalizationStatus(const QString& status)
 {
-    if (robot_controller_->updateCostmap()) {
-        QMessageBox::information(this, "成功", "代价地图更新成功");
-    } else {
-        QMessageBox::warning(this, "错误", "代价地图更新失败");
+    if (d_ptr->localization_status_label) {
+        d_ptr->localization_status_label->setText(status);
+    }
+}
+
+void NavigationPanel::setRVizView(const std::shared_ptr<RVizView>& rviz_view)
+{
+    if (!rviz_view) {
+        ROS_ERROR("RVizView pointer is null");
+        return;
+    }
+
+    ROS_INFO("Setting up RVizView in NavigationPanel");
+    
+    // 保存RVizView指针
+    d_ptr->rviz_view = rviz_view;
+    
+    // 连接目标点选择信号
+    connect(rviz_view.get(), &RVizView::goalSelected, 
+            [this](const geometry_msgs::PoseStamped& goal) {
+                ROS_INFO("Goal selected signal received in NavigationPanel from RVizView");
+                if (d_ptr->robot_controller) {
+                    ROS_INFO("Forwarding goal to RobotController::setNavigationGoal");
+                    d_ptr->robot_controller->setNavigationGoal(goal);
+                    d_ptr->robot_controller->enableGoalSetting(false);
+                }
+            });
+    ROS_INFO("Connected goalSelected signal from RVizView");
+    
+    // 连接初始位姿选择信号
+    connect(rviz_view.get(), &RVizView::initialPoseSelected, 
+            [this](const geometry_msgs::PoseWithCovarianceStamped& pose) {
+                ROS_INFO("Initial pose selected signal received");
+                if (d_ptr->robot_controller) {
+                    d_ptr->robot_controller->setInitialPose(pose);
+                    d_ptr->robot_controller->enableInitialPoseSetting(false);
+                    updateLocalizationStatus("初始位姿已设置");
+                }
+            });
+    ROS_INFO("Connected initialPoseSelected signal");
+    
+    ROS_INFO("RVizView setup completed in NavigationPanel");
+}
+
+void NavigationPanel::onPlannerSettings()
+{
+    if (!d_ptr->robot_controller) {
+        return;
+    }
+
+    // 创建并显示规划器设置对话框
+    PlannerSettingsDialog dialog(d_ptr->robot_controller, this);
+    dialog.exec();
+}
+
+void NavigationPanel::onNavigationStatusChanged(const QString& status)
+{
+    if (d_ptr->navigation_status_label) {
+        d_ptr->navigation_status_label->setText(status);
     }
 } 

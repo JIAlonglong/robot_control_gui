@@ -16,12 +16,18 @@ public:
     void updateWifiStrength(int strength);
     void updateStatus(const QString& status);
 
+    // 获取状态
+    double getBatteryLevel() const;
+    bool isConnected() const;
+    void setConnected(bool connected);
+
 private:
     QProgressBar* battery_bar_;
     QProgressBar* wifi_bar_;
     QLabel* status_label_;
     QLabel* battery_label_;
     QLabel* wifi_label_;
+    bool is_connected_;
 };
 
 #endif // ROBOT_STATUS_PANEL_H 

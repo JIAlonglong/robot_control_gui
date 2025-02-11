@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 运行AMCL节点 -->
+    <node pkg="amcl" type="amcl" name="amcl" output="screen">
+        <!-- 转换和帧参数 -->
+        <param name="odom_frame_id" value="odom"/>
+        <param name="base_frame_id" value="base_footprint"/>
+        <param name="global_frame_id" value="map"/>
+        
+        <!-- 初始化参数 -->
+        <param name="initial_pose_x" value="0.0"/>
+        <param name="initial_pose_y" value="0.0"/>
+        <param name="initial_pose_a" value="0.0"/>
+        <param name="initial_cov_xx" value="0.25"/>
+        <param name="initial_cov_yy" value="0.25"/>
+        <param name="initial_cov_aa" value="0.068538"/>
+        
+        <!-- 更新参数 -->
+        <param name="update_min_d" value="0.1"/>
+        <param name="update_min_a" value="0.1"/>
+        <param name="transform_tolerance" value="1.0"/>
+        <param name="gui_publish_rate" value="50.0"/>
+        
+        <!-- 滤波器参数 -->
+        <param name="min_particles" value="2000"/>
+        <param name="max_particles" value="20000"/>
+        <param name="kld_err" value="0.005"/>
+        <param name="kld_z" value="0.995"/>
+        <param name="resample_interval" value="1"/>
+        <param name="recovery_alpha_slow" value="0.0005"/>
+        <param name="recovery_alpha_fast" value="0.05"/>
+        
+        <!-- 里程计模型参数 -->
+        <param name="odom_model_type" value="diff"/>
+        <param name="odom_alpha1" value="0.05"/>
+        <param name="odom_alpha2" value="0.05"/>
+        <param name="odom_alpha3" value="0.05"/>
+        <param name="odom_alpha4" value="0.05"/>
+        
+        <!-- 激光模型参数 -->
+        <param name="laser_model_type" value="likelihood_field"/>
+        <param name="laser_likelihood_max_dist" value="2.0"/>
+        <param name="laser_max_beams" value="180"/>
+        <param name="laser_z_hit" value="0.98"/>
+        <param name="laser_z_rand" value="0.02"/>
+        <param name="laser_sigma_hit" value="0.05"/>
+        
+        <!-- 全局定位参数 -->
+        <param name="do_beamskip" value="true"/>
+        <param name="beam_skip_distance" value="0.5"/>
+        <param name="beam_skip_threshold" value="0.3"/>
+        <param name="tf_broadcast" value="true"/>
+        <param name="selective_resampling" value="true"/>
+    </node>
+</launch> 

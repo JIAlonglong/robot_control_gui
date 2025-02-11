@@ -10,6 +10,12 @@
 
 RobotStatusPanel::RobotStatusPanel(QWidget* parent)
     : QWidget(parent)
+    , battery_bar_(new QProgressBar(this))
+    , wifi_bar_(new QProgressBar(this))
+    , status_label_(new QLabel(this))
+    , battery_label_(new QLabel(this))
+    , wifi_label_(new QLabel(this))
+    , is_connected_(false)
 {
     // 创建主布局
     QVBoxLayout* main_layout = new QVBoxLayout(this);
@@ -141,4 +147,17 @@ void RobotStatusPanel::updateWifiStrength(int strength)
 void RobotStatusPanel::updateStatus(const QString& status)
 {
     status_label_->setText(tr("状态: %1").arg(status));
+}
+
+double RobotStatusPanel::getBatteryLevel() const {
+    return battery_bar_->value();
+}
+
+bool RobotStatusPanel::isConnected() const {
+    return is_connected_;
+}
+
+void RobotStatusPanel::setConnected(bool connected) {
+    is_connected_ = connected;
+    updateStatus(connected ? "已连接" : "未连接");
 } 
