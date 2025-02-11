@@ -172,8 +172,3 @@ roslaunch robot_control_gui robot_control_gui.launch
 
 ## 联系方式
 - 邮箱：jialonglongliu@gmail.com
-
-
-## 信号流图
-
-![Signal Flow Graph](docs/images/signal_flow.png)
