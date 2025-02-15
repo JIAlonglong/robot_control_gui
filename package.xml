@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="2">
   <name>robot_control_gui</name>
-  <version>0.1.0</version>
+  <version>3.0.0</version>
   <description>
     A universal Qt-based GUI for multi-robot control, supporting basic teleoperation,
     status monitoring, SLAM mapping, path planning, and sensor data visualization.
