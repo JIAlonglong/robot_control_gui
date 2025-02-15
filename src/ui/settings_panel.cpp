@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 #include "ui/settings_panel.h"
 #include "ros/robot_controller.h"
 #include <QLineEdit>
@@ -17,12 +39,11 @@
 #include <QHostInfo>
 #include <QNetworkInterface>
 
-SettingsPanel::SettingsPanel(const std::shared_ptr<RobotController>& robot_controller,
-                           QWidget* parent)
+SettingsPanel::SettingsPanel(std::shared_ptr<RobotController> robot_controller, QWidget* parent)
     : QWidget(parent)
     , d_ptr(std::make_unique<SettingsPanelPrivate>())
 {
-    d_ptr->robot_controller = robot_controller;
+    d_ptr->robot_controller = std::move(robot_controller);
     d_ptr->config_file_path = QDir::homePath() + "/.robot_control/settings.ini";
     
     setupUi();
@@ -133,25 +154,115 @@ void SettingsPanel::setupRosNetworkGroup()
     // Master URI
     auto* master_uri_label = new QLabel(tr("ROS Master URI:"), this);
     d_ptr->master_uri_edit = new QLineEdit(this);
-    d_ptr->master_uri_edit->setPlaceholderText("http://localhost:11311");
+    d_ptr->master_uri_edit->setPlaceholderText("http://192.168.1.100:11311");
     
-    // 主机名
-    auto* hostname_label = new QLabel(tr("主机名:"), this);
-    d_ptr->hostname_edit = new QLineEdit(this);
-    d_ptr->hostname_edit->setText(QHostInfo::localHostName());
+    // 本机IP
+    auto* local_ip_label = new QLabel(tr("本机IP:"), this);
+    d_ptr->local_ip_combo = new QComboBox(this);
     
-    // 连接测试
+    // 获取本机所有网络接口的IP地址
+    foreach(const QHostAddress &address, QNetworkInterface::allAddresses()) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && 
+            address != QHostAddress::LocalHost) {
+            d_ptr->local_ip_combo->addItem(address.toString());
+        }
+    }
+    d_ptr->local_ip_combo->addItem("localhost");
+    
+    // 机器人IP
+    auto* robot_ip_label = new QLabel(tr("机器人IP:"), this);
+    d_ptr->robot_ip_edit = new QLineEdit(this);
+    d_ptr->robot_ip_edit->setPlaceholderText("192.168.1.101");
+    
+    // 网络模式
+    auto* network_mode_label = new QLabel(tr("网络模式:"), this);
+    d_ptr->network_mode_combo = new QComboBox(this);
+    d_ptr->network_mode_combo->addItems({
+        tr("主机模式 (Master)"),
+        tr("从机模式 (Slave)")
+    });
+    
+    // 连接状态和按钮
     d_ptr->test_connection_button = new QPushButton(tr("测试连接"), this);
     d_ptr->connection_status_label = new QLabel(tr("未连接"), this);
     d_ptr->connection_status_label->setStyleSheet("color: #dc3545;");
     
     // 添加到布局
-    layout->addWidget(master_uri_label, 0, 0);
-    layout->addWidget(d_ptr->master_uri_edit, 0, 1, 1, 2);
-    layout->addWidget(hostname_label, 1, 0);
-    layout->addWidget(d_ptr->hostname_edit, 1, 1, 1, 2);
-    layout->addWidget(d_ptr->test_connection_button, 2, 1);
-    layout->addWidget(d_ptr->connection_status_label, 2, 2);
+    int row = 0;
+    layout->addWidget(network_mode_label, row, 0);
+    layout->addWidget(d_ptr->network_mode_combo, row++, 1, 1, 2);
+    
+    layout->addWidget(master_uri_label, row, 0);
+    layout->addWidget(d_ptr->master_uri_edit, row++, 1, 1, 2);
+    
+    layout->addWidget(local_ip_label, row, 0);
+    layout->addWidget(d_ptr->local_ip_combo, row++, 1, 1, 2);
+    
+    layout->addWidget(robot_ip_label, row, 0);
+    layout->addWidget(d_ptr->robot_ip_edit, row++, 1, 1, 2);
+    
+    layout->addWidget(d_ptr->test_connection_button, row, 1);
+    layout->addWidget(d_ptr->connection_status_label, row++, 2);
+    
+    // 连接信号
+    connect(d_ptr->network_mode_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsPanel::onNetworkModeChanged);
+    connect(d_ptr->local_ip_combo, &QComboBox::currentTextChanged,
+            this, &SettingsPanel::updateMasterURI);
+}
+
+void SettingsPanel::onNetworkModeChanged(int index)
+{
+    bool is_master = (index == 0);
+    
+    // 根据模式更新界面
+    d_ptr->robot_ip_edit->setEnabled(!is_master);
+    
+    // 更新 Master URI
+    updateMasterURI();
+}
+
+void SettingsPanel::updateMasterURI()
+{
+    bool is_master = (d_ptr->network_mode_combo->currentIndex() == 0);
+    QString ip = is_master ? d_ptr->local_ip_combo->currentText() : d_ptr->robot_ip_edit->text();
+    
+    if (ip.isEmpty()) {
+        ip = "localhost";
+    }
+    
+    d_ptr->master_uri_edit->setText(QString("http://%1:11311").arg(ip));
+}
+
+void SettingsPanel::applyNetworkSettings()
+{
+    if (!d_ptr->robot_controller) return;
+    
+    try {
+        bool is_master = (d_ptr->network_mode_combo->currentIndex() == 0);
+        QString master_uri = d_ptr->master_uri_edit->text();
+        QString local_ip = d_ptr->local_ip_combo->currentText();
+        
+        // 设置环境变量
+        d_ptr->robot_controller->setMasterURI(master_uri);
+        d_ptr->robot_controller->setHostname(local_ip);
+        
+        // 保存设置
+        QSettings settings;
+        settings.beginGroup("Network");
+        settings.setValue("mode", is_master ? "master" : "slave");
+        settings.setValue("master_uri", master_uri);
+        settings.setValue("local_ip", local_ip);
+        settings.setValue("robot_ip", d_ptr->robot_ip_edit->text());
+        settings.endGroup();
+        
+        QMessageBox::information(this, tr("设置成功"), 
+            tr("ROS网络设置已更新，请重启程序以使设置生效。"));
+            
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("设置失败"), 
+            tr("更新网络设置失败: %1").arg(e.what()));
+    }
 }
 
 void SettingsPanel::setupRobotConfigGroup()
@@ -310,33 +421,36 @@ void SettingsPanel::setupNavigationGroup()
 
 void SettingsPanel::onTestConnection()
 {
+    if (!d_ptr->robot_controller) {
+        d_ptr->connection_status_label->setText(tr("错误：控制器未初始化"));
+        return;
+    }
+
     d_ptr->test_connection_button->setEnabled(false);
     d_ptr->connection_status_label->setText(tr("正在测试..."));
     
-    // 获取设置的ROS Master URI
-    QString master_uri = d_ptr->master_uri_edit->text();
-    if (master_uri.isEmpty()) {
-        master_uri = "http://localhost:11311";
-    }
-    
-    // 测试连接
-    if (d_ptr->robot_controller) {
+    try {
+        QString master_uri = d_ptr->master_uri_edit->text();
+        if (master_uri.isEmpty()) {
+            master_uri = "http://localhost:11311";
+        }
+        
         bool success = d_ptr->robot_controller->testConnection(master_uri.toStdString());
-        updateConnectionStatus(success);
+        
+        if (success) {
+            d_ptr->connection_status_label->setText(tr("连接成功"));
+            d_ptr->connection_status_label->setStyleSheet("color: #28a745;");
+        } else {
+            d_ptr->connection_status_label->setText(tr("连接失败"));
+            d_ptr->connection_status_label->setStyleSheet("color: #dc3545;");
+        }
+        
+    } catch (const std::exception& e) {
+        d_ptr->connection_status_label->setText(tr("测试出错: %1").arg(e.what()));
+        d_ptr->connection_status_label->setStyleSheet("color: #dc3545;");
     }
     
     d_ptr->test_connection_button->setEnabled(true);
-}
-
-void SettingsPanel::updateConnectionStatus(bool connected)
-{
-    if (connected) {
-        d_ptr->connection_status_label->setText(tr("已连接"));
-        d_ptr->connection_status_label->setStyleSheet("color: #28a745;");
-    } else {
-        d_ptr->connection_status_label->setText(tr("连接失败"));
-        d_ptr->connection_status_label->setStyleSheet("color: #dc3545;");
-    }
 }
 
 void SettingsPanel::onSaveSettings()
@@ -368,7 +482,7 @@ void SettingsPanel::onApplySettings()
     
     // 应用ROS网络设置
     d_ptr->robot_controller->setMasterURI(d_ptr->master_uri_edit->text());
-    d_ptr->robot_controller->setHostname(d_ptr->hostname_edit->text());
+    d_ptr->robot_controller->setHostname(d_ptr->local_ip_combo->currentText());
     
     // 应用机器人配置
     d_ptr->robot_controller->setRobotModel(d_ptr->robot_model_combo->currentText().toStdString());
@@ -394,7 +508,7 @@ void SettingsPanel::loadSettings()
     // 加载ROS网络设置
     settings.beginGroup("ROS");
     d_ptr->master_uri_edit->setText(settings.value("master_uri", "http://localhost:11311").toString());
-    d_ptr->hostname_edit->setText(settings.value("hostname", QHostInfo::localHostName()).toString());
+    d_ptr->local_ip_combo->setCurrentText(settings.value("local_ip", "localhost").toString());
     settings.endGroup();
     
     // 加载机器人配置
@@ -428,7 +542,7 @@ void SettingsPanel::saveSettings()
     // 保存ROS网络设置
     settings.beginGroup("ROS");
     settings.setValue("master_uri", d_ptr->master_uri_edit->text());
-    settings.setValue("hostname", d_ptr->hostname_edit->text());
+    settings.setValue("local_ip", d_ptr->local_ip_combo->currentText());
     settings.endGroup();
     
     // 保存机器人配置
@@ -466,8 +580,8 @@ bool SettingsPanel::validateSettings()
     }
     
     // 验证主机名
-    if (d_ptr->hostname_edit->text().isEmpty()) {
-        QMessageBox::warning(this, tr("验证失败"), tr("主机名不能为空"));
+    if (d_ptr->local_ip_combo->currentText().isEmpty()) {
+        QMessageBox::warning(this, tr("验证失败"), tr("本机IP不能为空"));
         return false;
     }
     
@@ -495,4 +609,59 @@ bool SettingsPanel::validateSettings()
     }
     
     return true;
+}
+
+void SettingsPanel::updateConnectionState(bool connected)
+{
+    if (!d_ptr) return;
+
+    d_ptr->connect_button->setEnabled(!connected);
+    d_ptr->disconnect_button->setEnabled(connected);
+    d_ptr->master_uri_edit->setEnabled(!connected);
+    d_ptr->local_ip_combo->setEnabled(!connected);
+    d_ptr->robot_ip_edit->setEnabled(!connected && 
+        d_ptr->network_mode_combo->currentIndex() == 1);  // 只在从机模式下启用
+    
+    d_ptr->status_label->setText(connected ? tr("已连接") : tr("未连接"));
+}
+
+void SettingsPanel::onConnectClicked()
+{
+    if (!d_ptr->robot_controller) return;
+    
+    QString master_uri = d_ptr->master_uri_edit->text();
+    if (master_uri.isEmpty()) {
+        master_uri = "http://localhost:11311";
+    }
+    
+    QString hostname = d_ptr->local_ip_combo->currentText();
+    if (hostname.isEmpty()) {
+        hostname = "localhost";
+    }
+    
+    d_ptr->robot_controller->setMasterURI(master_uri);
+    d_ptr->robot_controller->setHostname(hostname);
+    
+    if (!d_ptr->robot_controller->connectToRobot()) {
+        d_ptr->status_label->setText(tr("连接失败"));
+        return;
+    }
+}
+
+void SettingsPanel::onDisconnectClicked()
+{
+    if (!d_ptr->robot_controller) return;
+    d_ptr->robot_controller->disconnectFromRobot();
+}
+
+void SettingsPanel::onConnectionStateChanged(bool connected)
+{
+    updateConnectionState(connected);
+}
+
+void SettingsPanel::onConnectionError(const QString& error)
+{
+    if (d_ptr && d_ptr->status_label) {
+        d_ptr->status_label->setText(error);
+    }
 } 

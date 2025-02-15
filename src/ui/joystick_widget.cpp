@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 /**
  * @file joystick_widget.cpp
  * @brief 虚拟摇杆控件实现
@@ -118,23 +140,30 @@ void JoystickWidget::resizeEvent(QResizeEvent* event)
 
 void JoystickWidget::updateJoystickPosition()
 {
-    // 计算相对于中心的偏移
-    QPointF offset = stick_pos_ - center_;
+    QPointF normalized = normalizePosition(stick_pos_);
+    double dx = normalized.x();
+    double dy = normalized.y();
     
-    // 归一化到 [-1, 1] 范围
-    double dx = qBound(-1.0, offset.x() / base_radius_, 1.0);
-    double dy = qBound(-1.0, offset.y() / base_radius_, 1.0);
-    
-    // 发送信号
-    emit linearJoystickMoved(dx, dy);
-    emit angularJoystickMoved(dx, dy);
+    emit moved(dx, dy);  // 使用统一的 moved 信号
+    update();
 }
 
 void JoystickWidget::reset()
 {
     is_pressed_ = false;
     stick_pos_ = center_;
+    emit moved(0.0, 0.0);  // 使用统一的 moved 信号
     update();
-    emit linearJoystickMoved(0.0, 0.0);
-    emit angularJoystickMoved(0.0, 0.0);
+}
+
+QPointF JoystickWidget::normalizePosition(const QPoint& pos) const
+{
+    // 计算相对于中心的偏移
+    QPointF offset = pos - center_;
+    
+    // 归一化到 [-1, 1] 范围
+    double dx = qBound(-1.0, offset.x() / base_radius_, 1.0);
+    double dy = qBound(-1.0, offset.y() / base_radius_, 1.0);
+    
+    return QPointF(dx, dy);
 } 

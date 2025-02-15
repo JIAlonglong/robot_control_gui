@@ -117,14 +117,13 @@ robot_control_gui/
 ## 1. 开发环境搭建
 
 ### 1.1 系统要求
-
 - Ubuntu 20.04
 - ROS Noetic
 - Qt 5.12+
-- C++14及以上
+- CMake 3.0.2+
+- Python 3.8+
 
 ### 1.2 依赖安装
-
 ```bash
 # 安装ROS基础包
 sudo apt-get install ros-noetic-desktop-full
@@ -137,227 +136,256 @@ sudo apt-get install ros-noetic-map-server
 # 安装Qt开发环境
 sudo apt-get install qt5-default
 sudo apt-get install qtcreator
+
+# 安装其他依赖
+sudo apt-get install python3-catkin-tools
+sudo apt-get install python3-vcstool
 ```
 
 ### 1.3 工作空间配置
-
 ```bash
 # 创建工作空间
 mkdir -p ~/catkin_ws/src
 cd ~/catkin_ws/src
 
 # 克隆代码
-git clone https://github.com/your-repo/robot_control_gui.git
+git clone https://github.com/yourusername/robot_control_gui.git
+
+# 初始化工作空间
+cd ~/catkin_ws
+catkin init
+catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # 编译
-cd ~/catkin_ws
-catkin_make
+catkin build
 ```
 
-## 2. 代码结构
+## 2. 开发规范
 
-```
-robot_control_gui/
-├── include/
-│   ├── gui/
-│   │   ├── main_window.h
-│   │   ├── navigation_panel.h
-│   │   └── visualization_panel.h
-│   └── ros/
-│       ├── robot_controller.h
-│       └── ros_bridge.h
-├── src/
-│   ├── gui/
-│   │   ├── main_window.cpp
-│   │   ├── navigation_panel.cpp
-│   │   └── visualization_panel.cpp
-│   └── ros/
-│       ├── robot_controller.cpp
-│       └── ros_bridge.cpp
-├── launch/
-│   └── robot_control.launch
-├── config/
-│   ├── rviz/
-│   └── params/
-└── CMakeLists.txt
+### 2.1 代码风格
+- 遵循 Google C++ 代码规范
+- 使用 clang-format 进行代码格式化
+- 代码缩进：4个空格
+- 行宽限制：100字符
+
+### 2.2 命名规范
+```cpp
+// 类名：大驼峰
+class RobotController {
+    // 成员变量：下划线后缀
+    int robot_id_;
+    double max_velocity_;
+    
+    // 方法名：小驼峰
+    void initializeRobot();
+    void setMaxVelocity(double velocity);
+};
+
+// 常量：全大写下划线
+const int MAX_ROBOT_COUNT = 10;
+const double DEFAULT_SPEED = 0.5;
 ```
 
-## 3. 开发规范
-
-### 3.1 代码风格
-
-- 使用Google C++代码风格
-- 类名使用大驼峰命名法
-- 函数名使用小驼峰命名法
-- 变量名使用下划线命名法
-- 常量使用全大写加下划线
-
-### 3.2 注释规范
-
+### 2.3 注释规范
 ```cpp
 /**
- * @brief 函数简要说明
- * @param param1 参数1说明
- * @param param2 参数2说明
- * @return 返回值说明
+ * @brief 类的简要说明
+ * 
+ * 类的详细说明，包括用途、功能等
  */
-```
-
-### 3.3 Git提交规范
-
-```
-feat: 添加新功能
-fix: 修复bug
-docs: 更新文档
-style: 代码格式修改
-refactor: 代码重构
-test: 添加测试
-chore: 构建过程或辅助工具的变动
-```
-
-## 4. 功能开发流程
-
-### 4.1 GUI开发
-
-1. 创建新的面板类：
-```cpp
-class NewPanel : public QWidget {
-    Q_OBJECT
+class ExampleClass {
 public:
-    explicit NewPanel(QWidget* parent = nullptr);
-    
-signals:
-    void signalName();
-    
-private slots:
-    void onButtonClicked();
-    
-private:
-    void setupUi();
+    /**
+     * @brief 方法的简要说明
+     * @param param1 参数1的说明
+     * @param param2 参数2的说明
+     * @return 返回值说明
+     * @throw std::runtime_error 异常说明
+     */
+    int exampleMethod(int param1, double param2);
 };
 ```
 
-2. 在主窗口中添加面板：
-```cpp
-void MainWindow::setupUi() {
-    auto* new_panel = new NewPanel(this);
-    ui_->tab_widget->addTab(new_panel, tr("新面板"));
-}
+## 3. 开发流程
+
+### 3.1 功能开发
+1. 创建功能分支
+```bash
+git checkout -b feature/new-feature
 ```
 
-### 4.2 ROS功能开发
-
-1. 创建新的功能类：
+2. 实现新功能
 ```cpp
+// 添加新的类
 class NewFeature {
 public:
-    NewFeature(ros::NodeHandle& nh);
+    void initialize();
+    void process();
     
 private:
-    void callback(const msg_type::ConstPtr& msg);
-    ros::Subscriber sub_;
-    ros::Publisher pub_;
+    // 实现细节
 };
 ```
 
-2. 在RobotController中集成：
+3. 添加测试
 ```cpp
-void RobotController::setupNewFeature() {
-    new_feature_ = std::make_unique<NewFeature>(nh_);
+TEST(NewFeatureTest, InitializationTest) {
+    NewFeature feature;
+    EXPECT_NO_THROW(feature.initialize());
 }
 ```
 
-## 5. 测试指南
-
-### 5.1 单元测试
-
-使用Google Test框架：
-
-```cpp
-TEST(TestSuite, TestName) {
-    // 准备测试数据
-    auto obj = TestClass();
-    
-    // 执行测试
-    auto result = obj.testMethod();
-    
-    // 验证结果
-    EXPECT_EQ(result, expected_value);
-}
-```
-
-### 5.2 集成测试
-
-使用rostest框架：
-
-```xml
-<launch>
-  <test test-name="test_name" pkg="robot_control_gui" type="test_node" />
-</launch>
-```
-
-## 6. 调试技巧
-
-### 6.1 ROS调试
-
-1. 使用rqt工具：
+4. 提交代码
 ```bash
-rqt_console  # 查看日志
-rqt_graph    # 查看节点关系
-rqt_plot     # 绘制数据曲线
+git add .
+git commit -m "feat: add new feature"
+git push origin feature/new-feature
 ```
 
-2. 使用rostopic工具：
-```bash
-rostopic echo /topic_name  # 查看话题数据
-rostopic hz /topic_name   # 查看话题频率
+### 3.2 代码审查
+1. 创建Pull Request
+2. 代码审查检查项：
+   - 功能完整性
+   - 代码质量
+   - 测试覆盖率
+   - 文档完整性
+
+### 3.3 持续集成
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build
+        run: |
+          catkin build
+          catkin run_tests
 ```
 
-### 6.2 Qt调试
+## 4. 调试指南
 
-1. 使用QDebug：
+### 4.1 日志系统
 ```cpp
+// 使用ROS日志
+ROS_DEBUG("Debug message");
+ROS_INFO("Info message");
+ROS_WARN("Warning message");
+ROS_ERROR("Error message");
+
+// 使用Qt日志
 qDebug() << "Debug message";
+qInfo() << "Info message";
 qWarning() << "Warning message";
-qCritical() << "Critical message";
 ```
 
-2. 使用Qt Creator调试器：
-- 设置断点
-- 查看变量
-- 单步执行
-
-## 7. 发布流程
-
-### 7.1 版本管理
-
+### 4.2 调试工具
 ```bash
-# 创建新版本
-git tag -a v1.0.0 -m "版本说明"
+# ROS调试工具
+rqt_console              # 日志查看
+rqt_graph                # 节点关系图
+rqt_plot                 # 数据绘图
+
+# Qt调试工具
+qtcreator                # IDE调试
+Qt Creator Debugger      # 断点调试
+Qt Visual Profiler       # 性能分析
+```
+
+### 4.3 常见问题解决
+1. 编译错误
+```bash
+# 清理构建
+catkin clean
+catkin build --force-cmake
+
+# 检查依赖
+rosdep check --from-paths src
+```
+
+2. 运行错误
+```bash
+# 检查ROS环境
+printenv | grep ROS
+
+# 检查节点状态
+rosnode list
+rosnode info /node_name
+```
+
+## 5. 发布流程
+
+### 5.1 版本管理
+```bash
+# 创建版本标签
+git tag -a v1.0.0 -m "Release version 1.0.0"
 git push origin v1.0.0
 
 # 更新版本号
-package.xml
-CMakeLists.txt
+package.xml:
+<version>1.0.0</version>
 ```
 
-### 7.2 发布检查清单
+### 5.2 发布检查清单
+- [ ] 所有测试通过
+- [ ] 文档已更新
+- [ ] 更新日志已完善
+- [ ] 依赖列表已更新
+- [ ] 性能测试已完成
 
-1. 代码审查
-   - 代码风格检查
-   - 单元测试通过
-   - 集成测试通过
+### 5.3 部署步骤
+```bash
+# 1. 构建发布包
+catkin_make install
 
-2. 文档更新
-   - API文档
-   - 使用说明
-   - 更新日志
+# 2. 创建Docker镜像
+docker build -t robot_control_gui:v1.0.0 .
 
-3. 依赖检查
-   - 检查依赖版本
-   - 更新package.xml
+# 3. 推送镜像
+docker push yourusername/robot_control_gui:v1.0.0
+```
 
-4. 性能测试
-   - CPU使用率
-   - 内存占用
-   - 响应时间 
+## 6. 性能优化
+
+### 6.1 代码优化
+```cpp
+// 使用引用避免拷贝
+void processData(const std::vector<double>& data);
+
+// 使用移动语义
+std::vector<double> getData() && {
+    return std::move(data_);
+}
+
+// 使用并发处理
+std::async(std::launch::async, &Class::heavyTask, this);
+```
+
+### 6.2 内存优化
+```cpp
+// 使用智能指针
+std::unique_ptr<RobotController> controller_;
+std::shared_ptr<Sensor> sensor_;
+
+// 预分配内存
+std::vector<double> data;
+data.reserve(expected_size);
+```
+
+### 6.3 性能监控
+```cpp
+// 时间性能
+auto start = std::chrono::high_resolution_clock::now();
+// ... 执行代码 ...
+auto end = std::chrono::high_resolution_clock::now();
+auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+// 内存使用
+std::size_t current = getCurrentRSS();
+std::size_t peak = getPeakRSS();
+``` 

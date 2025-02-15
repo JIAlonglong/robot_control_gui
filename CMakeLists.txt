@@ -152,6 +152,8 @@ add_library(${PROJECT_NAME} SHARED
   src/ui/rviz_view.cpp
   src/ui/planner_settings_dialog.cpp
   src/ui/goal_setting_dialog.cpp
+  src/ui/mapping_panel.cpp
+  src/ui/initial_pose_dialog.cpp
 )
 
 # 链接主程序库的依赖

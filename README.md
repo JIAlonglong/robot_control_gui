@@ -4,22 +4,31 @@
 
 ## ✨ 功能特性
 
+### 🌐 网络配置
+- 支持主从机模式配置
+- 自动检测本地网络接口
+- 可视化的连接状态监控
+- 支持多机器人协同
+
 ### 🎮 机器人控制
 - 虚拟摇杆控制（线速度和角速度）
 - 键盘控制（方向键和空格键）
 - 紧急停止功能
+- 碰撞避免系统
 
-### 🗺️ 自动定位
+### 🗺️ 多种建图方式
+- Gmapping SLAM
+- Cartographer SLAM
+- Hector SLAM
+- 手动遥控建图
+- 实时地图预览和保存
+
+### 🎯 智能导航系统
 - 基于AMCL的自适应定位
+- 多种规划算法（Dijkstra、A*、RRT、RRT*）
 - 智能避障系统（20cm安全距离）
 - 定位质量评估
 - 可视化标记显示
-
-### 🎯 路径规划
-- 多种规划算法（Dijkstra、A*、RRT、RRT*）
-- 可配置的启发式函数
-- 规划参数实时调整
-- 规划过程可视化
 
 ### 📊 状态监控
 - 机器人状态显示（电池、WiFi信号等）
@@ -103,6 +112,23 @@ source devel/setup.bash
 
 ## 🚀 使用方法
 
+### 网络配置
+1. 主机模式（控制电脑）：
+```bash
+# 选择"主机模式 (Master)"
+# 设置本机IP（自动检测可用网络接口）
+# ROS_MASTER_URI 将被自动配置
+```
+
+2. 从机模式（机器人）：
+```bash
+# 选择"从机模式 (Slave)"
+# 设置主控电脑IP
+# 配置本机IP
+# 确保与主机在同一网段
+```
+
+### 启动步骤
 1. 启动 TurtleBot3 仿真（或实体机器人）：
 ```bash
 export TURTLEBOT3_MODEL=burger
@@ -113,6 +139,20 @@ roslaunch turtlebot3_gazebo turtlebot3_world.launch
 ```bash
 roslaunch robot_control_gui robot_control_gui.launch
 ```
+
+### 建图操作
+1. 选择建图方法（Gmapping/Cartographer/Hector）
+2. 配置建图参数
+3. 使用虚拟摇杆或键盘控制机器人建图
+4. 实时查看建图效果
+5. 完成后保存地图
+
+### 导航控制
+1. 加载已有地图
+2. 设置初始位置
+3. 选择导航算法
+4. 点击目标位置开始导航
+5. 监控导航状态
 
 ### 控制说明
 - 虚拟摇杆：
@@ -130,8 +170,10 @@ roslaunch robot_control_gui robot_control_gui.launch
 - [系统设计](docs/design/README.md)
 - [开发指南](docs/development/README.md)
 - [API文档](docs/api/README.md)
+- [网络配置](docs/network_configuration.md)
 - [自动定位](docs/auto_localization.md)
 - [路径规划](docs/development/path_planning.md)
+- [建图指南](docs/mapping_guide.md)
 
 ## 🤝 贡献
 

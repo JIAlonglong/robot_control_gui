@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 #include "ui/control_panel.h"
 #include "ui/joystick_widget.h"
 #include "ui/speed_dashboard.h"
@@ -336,31 +358,8 @@ void ControlPanel::setupJoystick()
 void ControlPanel::connectSignals()
 {
     if (d_ptr->joystick) {
-        connect(d_ptr->joystick.get(), &JoystickWidget::linearJoystickMoved,
-                this, [this](double x, double y) {
-                    if (!d_ptr->robot_controller) {
-                        qWarning() << "机器人控制器未初始化";
-                        return;
-                    }
-                    double linear_vel = -y * d_ptr->max_linear_speed;
-                    d_ptr->robot_controller->setLinearVelocity(linear_vel);
-                    if (d_ptr->speed_dashboard) {
-                        d_ptr->speed_dashboard->setLinearSpeed(linear_vel);
-                    }
-                });
-
-        connect(d_ptr->joystick.get(), &JoystickWidget::angularJoystickMoved,
-                this, [this](double x, double y) {
-                    if (!d_ptr->robot_controller) {
-                        qWarning() << "机器人控制器未初始化";
-                        return;
-                    }
-                    double angular_vel = -x * d_ptr->max_angular_speed;
-                    d_ptr->robot_controller->setAngularVelocity(angular_vel);
-                    if (d_ptr->speed_dashboard) {
-                        d_ptr->speed_dashboard->setAngularSpeed(angular_vel);
-                    }
-                });
+        connect(d_ptr->joystick.get(), &JoystickWidget::moved,
+                this, &ControlPanel::onJoystickMoved);
     }
 
     if (d_ptr->emergency_stop_button) {
@@ -504,4 +503,18 @@ void ControlPanel::setStatusWarning(QLabel* label, const QString& text, bool is_
     ).arg(is_normal ? "#28a745" : "#dc3545");  // 正常为绿色，警告为红色
     
     label->setStyleSheet(style);
+}
+
+// 添加处理摇杆移动的槽函数
+void ControlPanel::onJoystickMoved(double x, double y)
+{
+    if (!d_ptr->robot_controller) return;
+    
+    // 将y轴值映射到线速度（向上为正）
+    double linear_vel = -y * d_ptr->robot_controller->getMaxLinearVelocity();
+    // 将x轴值映射到角速度（向右为负）
+    double angular_vel = -x * d_ptr->robot_controller->getMaxAngularVelocity();
+    
+    d_ptr->robot_controller->setLinearVelocity(linear_vel);
+    d_ptr->robot_controller->setAngularVelocity(angular_vel);
 } 
