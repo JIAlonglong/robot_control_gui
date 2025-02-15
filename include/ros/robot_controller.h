@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 #ifndef ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
 #define ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H
 
@@ -22,6 +44,7 @@
 #include <visualization_msgs/InteractiveMarker.h>
 #include <visualization_msgs/InteractiveMarkerControl.h>
 #include <tf/transform_listener.h>
+#include <std_msgs/Float32.h>
 
 class RobotController : public QObject {
     Q_OBJECT
@@ -55,6 +78,9 @@ public:
 
     void setMasterURI(const QString& uri);
     void setHostname(const QString& hostname);
+    bool connectToRobot();
+    void disconnectFromRobot();
+    bool isConnected() const { return is_connected_; }
 
     void setInitialPose(const geometry_msgs::PoseWithCovarianceStamped& pose);
     void setNavigationGoal(const geometry_msgs::PoseStamped& goal);
@@ -72,10 +98,11 @@ public:
     void startGlobalLocalization();
     void cancelGlobalLocalization();
 
-    void startMapping();
+    void startMapping(const QString& method);
     void stopMapping();
     void saveMap(const QString& filename);
     void loadMap(const QString& filename);
+    void updateMappingParameters(const std::map<std::string, double>& params);
 
     void setLinearVelocity(double linear);
     void setAngularVelocity(double angular);
@@ -140,6 +167,7 @@ signals:
     void mapUpdated(const nav_msgs::OccupancyGrid& map);
     void mappingStateChanged(bool is_mapping);
     void mappingProgressChanged(double progress);
+    void mappingStatusChanged(const QString& status);
     void navigationModeChanged(int mode);
     void poseUpdated(const geometry_msgs::Pose& pose);
     void laserScanUpdated(const sensor_msgs::LaserScan& scan);
@@ -148,6 +176,8 @@ signals:
     void globalPlannerChanged(const QString& planner_name);
     void localPlannerChanged(const QString& planner_name);
     void goalSet(const geometry_msgs::PoseStamped& goal);
+    void connectionStateChanged(bool connected);
+    void connectionError(const QString& error);
 
 private:
     void cleanup();
@@ -258,6 +288,22 @@ private:
 
     // 安全相关
     bool left_space_larger_{true};
+
+    // 建图相关成员
+    ros::ServiceClient map_saver_client_;
+    ros::Subscriber map_progress_sub_;
+    QString current_mapping_method_;
+    
+    void setupMappingNodes(const QString& method);
+    void cleanupMappingNodes();
+    void handleMappingProgress(const std_msgs::Float32::ConstPtr& msg);
+
+    bool is_connected_{false};
+    QString master_uri_;
+    QString hostname_;
+    
+    bool setupROSConnection();
+    void cleanupROSConnection();
 };
 
 #endif // ROBOT_CONTROL_GUI_ROBOT_CONTROLLER_H 

@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 /**
  * @file robot_controller.cpp
  * @brief ROS通信管理类实现
@@ -41,6 +63,9 @@ RobotController::RobotController(QObject* parent)
     , mapping_progress_(0.0)
     , yaw_tolerance_(0.1)
     , auto_localization_radius_(0.15)  // 设置自动定位的运动半径为15厘米
+    , is_connected_(false)
+    , master_uri_()
+    , hostname_()
 {
     // 设置发布者和订阅者
     setupPublishers();
@@ -398,35 +423,98 @@ void RobotController::stopNavigation()
     }
 }
 
-void RobotController::startMapping()
+void RobotController::startMapping(const QString& method)
 {
-    if (!is_mapping_) {
+    if (!is_initialized_) {
+        ROS_ERROR("RobotController not initialized");
+        return;
+    }
+
+    try {
+        current_mapping_method_ = method;  // 设置当前建图方法
+        
+        if (is_mapping_) {
+            throw std::runtime_error("建图已在进行中");
+        }
+
         is_mapping_ = true;
         mapping_progress_ = 0.0;
-        emit mappingStateChanged(true);
-        emit mappingProgressChanged(0.0);
+
+        // 根据不同的建图方法启动相应的节点
+        QString launch_cmd;
+        if (method == "Gmapping SLAM") {
+            launch_cmd = "roslaunch robot_control_gui gmapping.launch";
+        } else if (method == "Cartographer SLAM") {
+            launch_cmd = "roslaunch robot_control_gui cartographer.launch";
+        } else if (method == "Hector SLAM") {
+            launch_cmd = "roslaunch robot_control_gui hector_slam.launch";
+        } else {
+            throw std::runtime_error("未知的建图方法");
+        }
+
+        // 启动建图节点
+        if (system((launch_cmd + " &").toStdString().c_str()) != 0) {
+            throw std::runtime_error("启动" + method.toStdString() + "失败");
+        }
+
+        // 等待地图话题出现
+        ros::Duration(1.0).sleep();
+
+        // 订阅建图进度和地图话题
+        map_sub_ = nh_.subscribe("/map", 1, &RobotController::mapCallback, this);
+        map_progress_sub_ = nh_.subscribe("/mapping_progress", 1, 
+            &RobotController::handleMappingProgress, this);
+
+        emit mappingStatusChanged(tr("建图已启动: %1").arg(method));
+        ROS_INFO("Mapping started with method: %s", method.toStdString().c_str());
+    } catch (const std::exception& e) {
+        ROS_ERROR("Failed to start mapping: %s", e.what());
+        throw;
     }
 }
 
 void RobotController::stopMapping()
 {
-    if (is_mapping_) {
-            is_mapping_ = false;
-        mapping_progress_ = 0.0;
-        emit mappingStateChanged(false);
-        emit mappingProgressChanged(0.0);
+    if (!is_mapping_) return;
+
+    // 停止建图节点
+    if (current_mapping_method_ == "Gmapping SLAM") {
+        system("rosnode kill /slam_gmapping");
+    } else if (current_mapping_method_ == "Cartographer SLAM") {
+        system("rosnode kill /cartographer_node");
+    } else if (current_mapping_method_ == "Hector SLAM") {
+        system("rosnode kill /hector_slam");
     }
+
+    is_mapping_ = false;
+    map_progress_sub_.shutdown();
+    emit mappingStatusChanged(tr("建图已停止"));
 }
 
 void RobotController::saveMap(const QString& filename)
 {
-    // TODO: 实现地图保存功能
-    ROS_INFO("Saving map to file: %s", filename.toStdString().c_str());
+    if (!is_mapping_) return;
+
+    std_srvs::Empty srv;
+    if (map_saver_client_.call(srv)) {
+        system(QString("rosrun map_server map_saver -f %1").arg(filename).toStdString().c_str());
+        emit mappingStatusChanged(tr("地图已保存: %1").arg(filename));
+    } else {
+        emit mappingStatusChanged(tr("地图保存失败"));
+    }
 }
 
 void RobotController::mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& map)
 {
-    emit mapUpdated(*map);
+    if (!is_mapping_) return;
+    
+    try {
+        // 发送地图更新信号
+        emit mapUpdated(*map);
+        ROS_INFO_THROTTLE(1.0, "Map updated: size=%dx%d", map->info.width, map->info.height);
+    } catch (const std::exception& e) {
+        ROS_ERROR("Error in map callback: %s", e.what());
+    }
 }
 
 void RobotController::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
@@ -600,20 +688,70 @@ void RobotController::setNavigationMode(int mode)
 
 bool RobotController::testConnection(const std::string& master_uri)
 {
-    ros::master::V_TopicInfo topic_info;
-    return ros::master::getTopics(topic_info);
+    try {
+        // 临时保存当前的环境变量
+        QString old_master = qgetenv("ROS_MASTER_URI");
+        
+        // 设置新的 Master URI
+        qputenv("ROS_MASTER_URI", master_uri.c_str());
+        
+        // 设置连接超时时间
+        ros::Duration timeout(2.0);  // 2秒超时
+        ros::Time start_time = ros::Time::now();
+        
+        // 尝试获取 ROS Master 上的话题列表
+        ros::master::V_TopicInfo topic_info;
+        bool connected = false;
+        
+        while (ros::Time::now() - start_time < timeout) {
+            if (ros::master::getTopics(topic_info)) {
+                // 验证是否能找到关键的ROS话题
+                bool found_rosout = false;
+                bool found_clock = false;
+                
+                for (const auto& topic : topic_info) {
+                    if (topic.name == "/rosout") {
+                        found_rosout = true;
+                    }
+                    if (topic.name == "/clock") {
+                        found_clock = true;
+                    }
+                }
+                
+                if (found_rosout) {  // 至少要有 rosout 话题
+                    connected = true;
+                    break;
+                }
+            }
+            ros::Duration(0.1).sleep();  // 等待100ms后重试
+        }
+        
+        // 恢复原来的环境变量
+        qputenv("ROS_MASTER_URI", old_master.toUtf8());
+        
+        if (connected) {
+            ROS_INFO("Successfully connected to ROS Master at %s", master_uri.c_str());
+            ROS_INFO("Found %lu topics", topic_info.size());
+        } else {
+            ROS_WARN("Failed to connect to ROS Master at %s", master_uri.c_str());
+        }
+        
+        return connected;
+        
+    } catch (const std::exception& e) {
+        ROS_ERROR("Error testing connection: %s", e.what());
+        return false;
+    }
 }
 
 void RobotController::setMasterURI(const QString& uri)
 {
-    setenv("ROS_MASTER_URI", uri.toStdString().c_str(), 1);
-    qDebug() << "Set ROS_MASTER_URI to" << uri;
+    master_uri_ = uri;
 }
 
 void RobotController::setHostname(const QString& hostname)
 {
-    setenv("ROS_HOSTNAME", hostname.toStdString().c_str(), 1);
-    qDebug() << "Set ROS_HOSTNAME to" << hostname;
+    hostname_ = hostname;
 }
 
 void RobotController::setRobotModel(const std::string& model)
@@ -1069,7 +1207,7 @@ void RobotController::monitorLocalization(const ros::TimerEvent&)
                 move_base_client_.reset(new actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction>("move_base", true));
                 ros::Duration(1.0).sleep();  // 等待连接建立
             }
-    } else {
+        } else {
             // 根据方差计算定位进度
             double progress = std::max(0.0, std::min(100.0, 
                 (1.0 - position_variance/1.0) * 100.0));  // 调整进度计算
@@ -1148,7 +1286,7 @@ void RobotController::laserScanCallback(const sensor_msgs::LaserScan::ConstPtr& 
             ROS_INFO("Obstacle detected at distance %.2f m, will turn %s", 
                      min_front_dist, 
                      left_space_larger_ ? "left" : "right");
-    } else {
+        } else {
             ROS_INFO_THROTTLE(2.0, "Obstacle detected at distance %.2f m, will turn %s", 
                      min_front_dist, 
                      left_space_larger_ ? "left" : "right");
@@ -1404,4 +1542,147 @@ void RobotController::stopAutoLocalization()
     emit localizationStateChanged("已取消");
     
     ROS_INFO("Auto localization stopped");
+}
+
+void RobotController::handleMappingProgress(const std_msgs::Float32::ConstPtr& msg)
+{
+    // 处理建图进度
+    double progress = msg->data * 100.0;  // 将进度转换为百分比
+    emit mappingProgressChanged(progress);
+}
+
+void RobotController::updateMappingParameters(const std::map<std::string, double>& params)
+{
+    if (!is_initialized_) {
+        ROS_ERROR("RobotController not initialized");
+        return;
+    }
+
+    try {
+        // 根据当前的建图方法更新参数
+        if (current_mapping_method_ == "Gmapping SLAM") {
+            // 使用 dynamic_reconfigure 更新 Gmapping 参数
+            dynamic_reconfigure::ReconfigureRequest req;
+            dynamic_reconfigure::ReconfigureResponse res;
+            dynamic_reconfigure::DoubleParameter double_param;
+            dynamic_reconfigure::Config conf;
+
+            for (const auto& param : params) {
+                double_param.name = param.first;
+                double_param.value = param.second;
+                conf.doubles.push_back(double_param);
+            }
+
+            req.config = conf;
+            ros::service::call("/slam_gmapping/set_parameters", req, res);
+        }
+        else if (current_mapping_method_ == "Cartographer SLAM") {
+            // 更新 Cartographer 参数
+            // TODO: 实现 Cartographer 参数更新
+        }
+        else if (current_mapping_method_ == "Hector SLAM") {
+            // 更新 Hector SLAM 参数
+            // TODO: 实现 Hector SLAM 参数更新
+        }
+
+        ROS_INFO("Updated mapping parameters for %s", current_mapping_method_.toStdString().c_str());
+    }
+    catch (const std::exception& e) {
+        ROS_ERROR("Failed to update mapping parameters: %s", e.what());
+    }
+}
+
+bool RobotController::connectToRobot()
+{
+    if (is_connected_) {
+        ROS_WARN("Already connected to robot");
+        return true;
+    }
+
+    try {
+        if (master_uri_.isEmpty()) {
+            throw std::runtime_error("ROS_MASTER_URI not set");
+        }
+
+        // 设置ROS环境变量
+        qputenv("ROS_MASTER_URI", master_uri_.toUtf8());
+        if (!hostname_.isEmpty()) {
+            qputenv("ROS_HOSTNAME", hostname_.toUtf8());
+        }
+
+        // 初始化ROS连接
+        if (!setupROSConnection()) {
+            throw std::runtime_error("Failed to initialize ROS connection");
+        }
+
+        is_connected_ = true;
+        emit connectionStateChanged(true);
+        ROS_INFO("Connected to robot at %s", master_uri_.toStdString().c_str());
+        return true;
+
+    } catch (const std::exception& e) {
+        ROS_ERROR("Failed to connect to robot: %s", e.what());
+        emit connectionError(QString("连接失败: %1").arg(e.what()));
+        return false;
+    }
+}
+
+void RobotController::disconnectFromRobot()
+{
+    if (!is_connected_) return;
+
+    cleanupROSConnection();
+    is_connected_ = false;
+    emit connectionStateChanged(false);
+    ROS_INFO("Disconnected from robot");
+}
+
+bool RobotController::setupROSConnection()
+{
+    // 检查ROS Master是否可达
+    if (!ros::master::check()) {
+        ROS_ERROR("Cannot contact ROS master at %s", master_uri_.toStdString().c_str());
+        return false;
+    }
+
+    // 初始化所有ROS订阅者和发布者
+    try {
+        // 导航相关
+        move_base_client_.reset(new actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction>("move_base", true));
+        if (!move_base_client_->waitForServer(ros::Duration(5.0))) {
+            ROS_WARN("Move base action server not available");
+        }
+
+        // 发布者
+        cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("cmd_vel", 1);
+        initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
+
+        // 订阅者
+        odom_sub_ = nh_.subscribe("odom", 1, &RobotController::odomCallback, this);
+        amcl_pose_sub_ = nh_.subscribe("amcl_pose", 1, &RobotController::amclPoseCallback, this);
+        scan_sub_ = nh_.subscribe("scan", 1, &RobotController::scanCallback, this);
+        battery_sub_ = nh_.subscribe("battery_state", 1, &RobotController::batteryCallback, this);
+
+        // 服务客户端
+        clear_costmaps_client_ = nh_.serviceClient<std_srvs::Empty>("move_base/clear_costmaps");
+
+        return true;
+    } catch (const std::exception& e) {
+        ROS_ERROR("Error setting up ROS connections: %s", e.what());
+        return false;
+    }
+}
+
+void RobotController::cleanupROSConnection()
+{
+    // 关闭所有订阅者和发布者
+    cmd_vel_pub_.shutdown();
+    initial_pose_pub_.shutdown();
+    odom_sub_.shutdown();
+    amcl_pose_sub_.shutdown();
+    scan_sub_.shutdown();
+    battery_sub_.shutdown();
+    
+    // 重置action client
+    move_base_client_.reset();
 } 
