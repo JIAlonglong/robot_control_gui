@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 /**
  * @file main_window.cpp
  * @brief 主窗口类的实现
@@ -32,6 +54,8 @@
 #include <QToolButton>
 #include <QSpacerItem>
 #include <QIcon>
+#include <QTabWidget>
+#include <QApplication>
 
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -77,9 +101,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
-    if (d_->robot_controller_) {
-        d_->robot_controller_->stop();
-    }
+    // Private 结构体的智能指针会自动清理所有面板
 }
 
 void MainWindow::setupUi()
@@ -99,31 +121,54 @@ void MainWindow::setupUi()
     main_layout->setContentsMargins(0, 0, 0, 0);
     main_layout->setSpacing(0);
 
-    // 创建RViz视图
-    d_->rviz_view_ = std::make_shared<RVizView>(d_->central_widget_);
-    ROS_INFO("RVizView created");
+    // 创建分割器
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
     
-    // 创建堆叠部件
-    d_->stacked_widget_ = new QStackedWidget(d_->central_widget_);
+    // 创建左侧标签页控件
+    auto* tab_widget = new QTabWidget(this);
+    tab_widget->setMinimumWidth(300);  // 设置最小宽度
     
-    // 创建控制面板
-    d_->control_panel_ = std::make_shared<ControlPanel>(d_->robot_controller_, d_->stacked_widget_);
-    d_->stacked_widget_->addWidget(d_->control_panel_.get());
-    ROS_INFO("ControlPanel created");
+    // 创建RViz视图（只创建一个实例）
+    d_->rviz_view_ = std::make_shared<RVizView>(this);
+    if (!d_->rviz_view_) {
+        ROS_ERROR("Failed to create RVizView");
+        return;
+    }
     
-    // 创建导航面板
-    d_->navigation_panel_ = std::make_shared<NavigationPanel>(d_->robot_controller_, d_->stacked_widget_);
-    d_->stacked_widget_->addWidget(d_->navigation_panel_.get());
-    ROS_INFO("NavigationPanel created");
+    // 设置RViz视图的最小尺寸
+    d_->rviz_view_->setMinimumWidth(400);
+    d_->rviz_view_->setMinimumHeight(300);
     
-    // 创建设置面板
-    d_->settings_panel_ = std::make_shared<SettingsPanel>(d_->robot_controller_, d_->stacked_widget_);
-    d_->stacked_widget_->addWidget(d_->settings_panel_.get());
-    ROS_INFO("SettingsPanel created");
+    // 创建各个面板
+    d_->navigation_panel_ = std::make_shared<NavigationPanel>(d_->robot_controller_, this);
+    d_->control_panel_ = std::make_shared<ControlPanel>(d_->robot_controller_, this);
+    d_->settings_panel_ = std::make_shared<SettingsPanel>(d_->robot_controller_, this);
+    d_->mapping_panel_ = new MappingPanel(d_->robot_controller_, this);
     
-    // 设置布局
-    main_layout->addWidget(d_->rviz_view_.get(), 2);  // RViz视图占2/3
-    main_layout->addWidget(d_->stacked_widget_, 1);   // 控制面板占1/3
+    // 添加标签页
+    tab_widget->addTab(d_->control_panel_.get(), tr("控制"));
+    tab_widget->addTab(d_->navigation_panel_.get(), tr("导航"));
+    tab_widget->addTab(d_->mapping_panel_, tr("建图"));
+    tab_widget->addTab(d_->settings_panel_.get(), tr("设置"));
+    
+    // 将标签页和RViz视图添加到分割器
+    splitter->addWidget(tab_widget);
+    splitter->addWidget(d_->rviz_view_.get());
+    
+    // 设置分割器的初始大小比例
+    splitter->setStretchFactor(0, 1);  // 左侧面板
+    splitter->setStretchFactor(1, 2);  // RViz视图
+    
+    // 将分割器添加到主布局
+    main_layout->addWidget(splitter);
+    
+    // 设置RViz视图到各个面板
+    if (d_->navigation_panel_) {
+        d_->navigation_panel_->setRVizView(d_->rviz_view_.get());
+    }
+    if (d_->mapping_panel_) {
+        d_->mapping_panel_->setRVizView(d_->rviz_view_.get());
+    }
     
     // 创建工具栏
     createToolBar();
@@ -134,8 +179,10 @@ void MainWindow::setupUi()
     ROS_INFO("Display options panel created");
     
     // 设置初始页面
-    d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
-    ROS_INFO("Initial page set to control panel");
+    tab_widget->setCurrentWidget(d_->control_panel_.get());
+    
+    // 保存 tab_widget 指针以供后续使用
+    d_->tab_widget_ = tab_widget;
     
     ROS_INFO("UI setup completed in MainWindow");
 }
@@ -199,8 +246,8 @@ void MainWindow::createToolBar()
         if (control_action->isChecked()) {
             navigation_action->setChecked(false);
             settings_action->setChecked(false);
-            if (d_->control_panel_) {
-                d_->stacked_widget_->setCurrentWidget(d_->control_panel_.get());
+            if (d_->control_panel_ && d_->tab_widget_) {
+                d_->tab_widget_->setCurrentWidget(d_->control_panel_.get());
                 ROS_INFO("Switched to control panel");
             }
         }
@@ -210,8 +257,8 @@ void MainWindow::createToolBar()
         if (navigation_action->isChecked()) {
             control_action->setChecked(false);
             settings_action->setChecked(false);
-            if (d_->navigation_panel_) {
-                d_->stacked_widget_->setCurrentWidget(d_->navigation_panel_.get());
+            if (d_->navigation_panel_ && d_->tab_widget_) {
+                d_->tab_widget_->setCurrentWidget(d_->navigation_panel_.get());
                 ROS_INFO("Switched to navigation panel");
             }
         }
@@ -221,8 +268,8 @@ void MainWindow::createToolBar()
         if (settings_action->isChecked()) {
             control_action->setChecked(false);
             navigation_action->setChecked(false);
-            if (d_->settings_panel_) {
-                d_->stacked_widget_->setCurrentWidget(d_->settings_panel_.get());
+            if (d_->settings_panel_ && d_->tab_widget_) {
+                d_->tab_widget_->setCurrentWidget(d_->settings_panel_.get());
                 ROS_INFO("Switched to settings panel");
             }
         }
@@ -507,7 +554,19 @@ void MainWindow::updateKeyboardControl()
 void MainWindow::updateRobotState()
 {
     if (!d_->robot_controller_) return;
-    // TODO: 更新机器人状态显示
+    
+    bool is_mapping = d_->robot_controller_->isMapping();
+    bool is_navigating = d_->robot_controller_->isNavigating();
+    
+    // 在建图时禁用导航功能
+    if (d_->navigation_panel_) {
+        d_->navigation_panel_->setEnabled(!is_mapping);
+    }
+    
+    // 在导航时禁用建图功能
+    if (d_->mapping_panel_) {
+        d_->mapping_panel_->setEnabled(!is_navigating);
+    }
 }
 
 void MainWindow::updateRobotVelocity()
@@ -622,7 +681,9 @@ void MainWindow::setupConnections()
     ROS_INFO("Connected RobotController signals");
 
     // 设置 RVizView 到 NavigationPanel
-    d_->navigation_panel_->setRVizView(d_->rviz_view_);
+    if (d_->navigation_panel_ && d_->rviz_view_) {
+        d_->navigation_panel_->setRVizView(d_->rviz_view_.get());
+    }
     ROS_INFO("Set RVizView to NavigationPanel");
 
     // 连接工具栏按钮信号
@@ -633,6 +694,18 @@ void MainWindow::setupConnections()
     connect(d_->navigation_panel_.get(), &NavigationPanel::pauseNavigationClicked,
             d_->robot_controller_.get(), &RobotController::pauseNavigation);
     ROS_INFO("Connected navigation control signals");
+
+    // 添加建图面板的连接
+    if (d_->mapping_panel_ && d_->robot_controller_) {
+        connect(d_->robot_controller_.get(), &RobotController::mappingStatusChanged,
+                this, &MainWindow::onRobotStatusChanged);
+    }
+
+    // 连接地图更新信号
+    if (d_->robot_controller_ && d_->rviz_view_) {
+        connect(d_->robot_controller_.get(), &RobotController::mapUpdated,
+                d_->rviz_view_.get(), &RVizView::updateMappingDisplay);
+    }
 
     ROS_INFO("All connections set up in MainWindow");
 } 

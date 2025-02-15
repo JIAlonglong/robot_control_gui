@@ -20,34 +20,25 @@
  * SOFTWARE.
  */
 
-#ifndef ROBOT_CONTROL_GUI_SPEED_DASHBOARD_H
-#define ROBOT_CONTROL_GUI_SPEED_DASHBOARD_H
+#pragma once
 
-#include <QWidget>
-#include <memory>
+#include <QDialog>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
-class SpeedDashboard : public QWidget
-{
+class QDoubleSpinBox;
+class QDialogButtonBox;
+
+class InitialPoseDialog : public QDialog {
     Q_OBJECT
-
 public:
-    explicit SpeedDashboard(QWidget* parent = nullptr);
-    ~SpeedDashboard() override;
-
-public slots:
-    void setLinearSpeed(double speed);
-    void setAngularSpeed(double speed);
-
-protected:
-    void paintEvent(QPaintEvent* event) override;
+    explicit InitialPoseDialog(QWidget* parent = nullptr);
+    geometry_msgs::PoseWithCovarianceStamped getPose() const;
 
 private:
-    void setupUi();
-
-    double current_linear_speed_{0.0};
-    double current_angular_speed_{0.0};
-    const double max_linear_speed_{1.0};   // m/s
-    const double max_angular_speed_{1.0};  // rad/s
-};
-
-#endif // ROBOT_CONTROL_GUI_SPEED_DASHBOARD_H 
+    void setupUI();
+    
+    QDoubleSpinBox* x_spinbox_{nullptr};
+    QDoubleSpinBox* y_spinbox_{nullptr};
+    QDoubleSpinBox* yaw_spinbox_{nullptr};
+    QDialogButtonBox* button_box_{nullptr};
+}; 

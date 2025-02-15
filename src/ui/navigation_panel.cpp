@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) 2025 JIAlonglong
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 /**
  * @file navigation_panel.cpp
  * @brief 导航控制面板类的实现
@@ -61,7 +83,7 @@ public:
     bool is_localizing_{false};
 
     // RVizView
-    std::shared_ptr<RVizView> rviz_view;
+    RVizView* rviz_view_{nullptr};
 };
 
 NavigationPanel::NavigationPanel(std::shared_ptr<RobotController> robot_controller, QWidget* parent)
@@ -69,7 +91,7 @@ NavigationPanel::NavigationPanel(std::shared_ptr<RobotController> robot_controll
     , d_ptr(new NavigationPanelPrivate(this))
 {
     d_ptr->robot_controller = robot_controller;
-    setupUi();
+    setupUI();
     setupJoystick();
     setupKeyboardControl();
     connectSignalsAndSlots();
@@ -84,54 +106,55 @@ NavigationPanel::~NavigationPanel()
     }
 }
 
-void NavigationPanel::setupUi()
+void NavigationPanel::setupUI()
 {
+    // 创建主布局
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(0, 0, 0, 0);
     main_layout->setSpacing(10);
-    
+
     // Navigation tools group
     auto* tools_group = new QGroupBox("导航工具", this);
     auto* tools_layout = new QHBoxLayout(tools_group);
-    
+
     d_ptr->set_initial_pose_button = new QPushButton("设置初始位姿", this);
     d_ptr->auto_localization_button = new QPushButton("自动定位", this);
     d_ptr->set_goal_button = new QPushButton("设置目标点", this);
     d_ptr->cancel_goal_button = new QPushButton("取消目标点", this);
     d_ptr->planner_settings_button = new QPushButton("规划器设置", this);
     d_ptr->planner_settings_button->setToolTip("设置全局和局部路径规划器");
-    
+
     tools_layout->addWidget(d_ptr->set_initial_pose_button);
     tools_layout->addWidget(d_ptr->auto_localization_button);
     tools_layout->addWidget(d_ptr->set_goal_button);
     tools_layout->addWidget(d_ptr->cancel_goal_button);
     tools_layout->addWidget(d_ptr->planner_settings_button);
-    
+
     main_layout->addWidget(tools_group);
 
     // Navigation control group
     auto* control_group = new QGroupBox("导航控制", this);
     auto* control_layout = new QHBoxLayout(control_group);
-    
-    d_ptr->start_navigation_button = new QPushButton(tr("开始导航"), this);
+
+    d_ptr->start_navigation_button = new QPushButton("开始导航", this);
     d_ptr->start_navigation_button->setObjectName("start_navigation_button");
     d_ptr->start_navigation_button->setEnabled(false);
     d_ptr->pause_navigation_button = new QPushButton("暂停导航", this);
     d_ptr->stop_navigation_button = new QPushButton("停止导航", this);
     d_ptr->emergency_stop_button = new QPushButton("紧急停止", this);
     d_ptr->emergency_stop_button->setStyleSheet("background-color: red; color: white;");
-    
+
     control_layout->addWidget(d_ptr->start_navigation_button);
     control_layout->addWidget(d_ptr->pause_navigation_button);
     control_layout->addWidget(d_ptr->stop_navigation_button);
     control_layout->addWidget(d_ptr->emergency_stop_button);
-    
+
     main_layout->addWidget(control_group);
 
     // Status display group
     auto* status_group = new QGroupBox("状态显示", this);
     auto* status_layout = new QVBoxLayout(status_group);
-    
+
     d_ptr->localization_status_label = new QLabel("定位状态: 未定位", this);
     d_ptr->navigation_status_label = new QLabel("导航状态: 未开始", this);
     d_ptr->localization_progress_bar = new QProgressBar(this);
@@ -140,7 +163,7 @@ void NavigationPanel::setupUi()
     d_ptr->estimated_time_label = new QLabel("预计到达时间: 0.0 秒", this);
     d_ptr->linear_velocity_label = new QLabel("线速度: 0.00 m/s", this);
     d_ptr->angular_velocity_label = new QLabel("角速度: 0.00 rad/s", this);
-    
+
     status_layout->addWidget(d_ptr->localization_status_label);
     status_layout->addWidget(d_ptr->navigation_status_label);
     status_layout->addWidget(d_ptr->localization_progress_bar);
@@ -149,8 +172,15 @@ void NavigationPanel::setupUi()
     status_layout->addWidget(d_ptr->estimated_time_label);
     status_layout->addWidget(d_ptr->linear_velocity_label);
     status_layout->addWidget(d_ptr->angular_velocity_label);
-    
+
     main_layout->addWidget(status_group);
+
+    // 如果有RViz视图，添加到布局
+    if (d_ptr->rviz_view_) {
+        main_layout->addWidget(d_ptr->rviz_view_);
+    }
+
+    setLayout(main_layout);
 }
 
 void NavigationPanel::setupJoystick()
@@ -217,12 +247,14 @@ void NavigationPanel::connectSignalsAndSlots()
             });
 
     // 连接按钮点击事件
-    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked, 
+    connect(d_ptr->set_initial_pose_button, &QPushButton::clicked,
             this, &NavigationPanel::onSetInitialPose);
+    connect(d_ptr->set_goal_button, &QPushButton::clicked,
+            this, &NavigationPanel::onSetGoal);
+
+    // 连接按钮点击事件
     connect(d_ptr->auto_localization_button, &QPushButton::clicked, 
             this, &NavigationPanel::onAutoLocalization);
-    connect(d_ptr->set_goal_button, &QPushButton::clicked, 
-            this, &NavigationPanel::onSetGoal);
     connect(d_ptr->cancel_goal_button, &QPushButton::clicked, 
             this, &NavigationPanel::onCancelGoal);
     connect(d_ptr->start_navigation_button, &QPushButton::clicked, 
@@ -241,11 +273,22 @@ void NavigationPanel::connectSignalsAndSlots()
 
 void NavigationPanel::onSetInitialPose()
 {
-    if (d_ptr->rviz_view) {
-        d_ptr->rviz_view->activateInitialPoseTool();
-        ROS_INFO("Activated initial pose tool from NavigationPanel");
-    } else {
-        ROS_ERROR("RVizView not set in NavigationPanel");
+    if (!d_ptr->robot_controller) {
+        ROS_ERROR("Robot controller not initialized");
+        return;
+    }
+
+    // 创建并显示初始位姿设置对话框
+    InitialPoseDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        // 获取用户设置的初始位姿
+        geometry_msgs::PoseWithCovarianceStamped pose = dialog.getPose();
+        
+        // 设置初始位姿
+        d_ptr->robot_controller->setInitialPose(pose);
+        ROS_INFO("Set initial pose from dialog: x=%.3f, y=%.3f", 
+                 pose.pose.pose.position.x, 
+                 pose.pose.pose.position.y);
     }
 }
 
@@ -286,7 +329,9 @@ void NavigationPanel::onSetGoal()
         
         // 设置导航目标点
         d_ptr->robot_controller->setNavigationGoal(goal);
-        ROS_INFO("Set navigation goal from panel");
+        ROS_INFO("Set navigation goal from dialog: x=%.3f, y=%.3f",
+                 goal.pose.position.x,
+                 goal.pose.position.y);
     }
 }
 
@@ -571,43 +616,10 @@ void NavigationPanel::updateLocalizationStatus(const QString& status)
     }
 }
 
-void NavigationPanel::setRVizView(const std::shared_ptr<RVizView>& rviz_view)
+void NavigationPanel::setRVizView(RVizView* view)
 {
-    if (!rviz_view) {
-        ROS_ERROR("RVizView pointer is null");
-        return;
-    }
-
-    ROS_INFO("Setting up RVizView in NavigationPanel");
-    
-    // 保存RVizView指针
-    d_ptr->rviz_view = rviz_view;
-    
-    // 连接目标点选择信号
-    connect(rviz_view.get(), &RVizView::goalSelected, 
-            [this](const geometry_msgs::PoseStamped& goal) {
-                ROS_INFO("Goal selected signal received in NavigationPanel from RVizView");
-                if (d_ptr->robot_controller) {
-                    ROS_INFO("Forwarding goal to RobotController::setNavigationGoal");
-                    d_ptr->robot_controller->setNavigationGoal(goal);
-                    d_ptr->robot_controller->enableGoalSetting(false);
-                }
-            });
-    ROS_INFO("Connected goalSelected signal from RVizView");
-    
-    // 连接初始位姿选择信号
-    connect(rviz_view.get(), &RVizView::initialPoseSelected, 
-            [this](const geometry_msgs::PoseWithCovarianceStamped& pose) {
-                ROS_INFO("Initial pose selected signal received");
-                if (d_ptr->robot_controller) {
-                    d_ptr->robot_controller->setInitialPose(pose);
-                    d_ptr->robot_controller->enableInitialPoseSetting(false);
-                    updateLocalizationStatus("初始位姿已设置");
-                }
-            });
-    ROS_INFO("Connected initialPoseSelected signal");
-    
-    ROS_INFO("RVizView setup completed in NavigationPanel");
+    if (!d_ptr) return;
+    d_ptr->rviz_view_ = view;
 }
 
 void NavigationPanel::onPlannerSettings()
