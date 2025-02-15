@@ -38,21 +38,21 @@ function dijkstra(graph, start, goal):
 
 #### 2.2.1 启发函数
 
-```cpp
+$$
 h(n) = w1 * euclidean_distance(n, goal) + 
        w2 * manhattan_distance(n, goal) +
        w3 * obstacle_cost(n)
-```
+$$
 
 #### 2.2.2 代价函数
 
-```cpp
+$$
 f(n) = g(n) + h(n)
-```
+$$
 
 其中：
-- g(n)：从起点到节点n的实际代价
-- h(n)：从节点n到目标点的估计代价
+- $g(n)$：从起点到节点n的实际代价
+- $h(n)$：从节点n到目标点的估计代价
 
 ## 3. 局部路径规划
 
@@ -62,17 +62,17 @@ f(n) = g(n) + h(n)
 
 #### 3.1.1 速度采样空间
 
-```cpp
+$$
 Vs = { (v,w) | v ∈ [v_min, v_max], w ∈ [w_min, w_max] }
-```
+$$
 
 #### 3.1.2 评价函数
 
-```cpp
+$$
 G(v,w) = α * heading(v,w) + 
          β * dist(v,w) + 
          γ * velocity(v,w)
-```
+$$
 
 其中：
 - heading：航向得分
@@ -86,29 +86,29 @@ G(v,w) = α * heading(v,w) +
 
 #### 3.2.1 优化目标
 
-```
+$$
 minimize J = Σ (w_k * c_k(x))
-```
+$$
 
 其中：
-- c_k：约束函数
-- w_k：权重
-- x：轨迹参数
+- $c_k$：约束函数
+- $w_k$：权重
+- $x$：轨迹参数
 
 #### 3.2.2 约束条件
 
 1. 运动学约束：
-   ```
+   $$
    v ≤ v_max
    |w| ≤ w_max
    |a| ≤ a_max
-   ```
+   $$
 
 2. 动力学约束：
-   ```
+   $$
    |dv/dt| ≤ a_max
    |dw/dt| ≤ ε_max
-   ```
+   $$
 
 ## 4. 参数配置
 
